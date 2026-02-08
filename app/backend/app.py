@@ -118,6 +118,12 @@ async def index():
     return await bp.send_static_file("index.html")
 
 
+@bp.route("/health")
+async def health():
+    """Health check for Container Apps startup/readiness probes. No auth required."""
+    return "", 200
+
+
 # Empty page is recommended for login redirect to work.
 # See https://github.com/AzureAD/microsoft-authentication-library-for-js/blob/dev/lib/msal-browser/docs/initialization.md#redirecturi-considerations for more information
 @bp.route("/redirect")

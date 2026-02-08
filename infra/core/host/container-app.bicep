@@ -79,6 +79,9 @@ param serviceType string = ''
 @description('The target port for the container')
 param targetPort int = 80
 
+@description('Health probes (Startup, Liveness, Readiness). Optional.')
+param probes array = []
+
 resource userIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = if (!empty(identityName)) {
   name: identityName
 }
@@ -159,6 +162,7 @@ resource app 'Microsoft.App/containerApps@2023-05-02-preview' = {
             cpu: json(containerCpuCoreCount)
             memory: containerMemory
           }
+          probes: !empty(probes) ? probes : null
         }
       ]
       scale: {

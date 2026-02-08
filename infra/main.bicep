@@ -357,7 +357,8 @@ param useWebSource bool = false
 @description('Whether to enable SharePoint sources for agentic retrieval')
 param useSharePointSource bool = false
 
-param acaIdentityName string = deploymentTarget == 'containerapps' ? '${environmentName}-aca-identity' : ''
+// Shared user-assigned identity name (used by backend and zip-processor)
+param appSharedIdentityName string = '${environmentName}-app-identity'
 param acaManagedEnvironmentName string = deploymentTarget == 'containerapps' ? '${environmentName}-aca-env' : ''
 param containerRegistryName string = deploymentTarget == 'containerapps'
   ? '${replace(toLower(environmentName), '-', '')}acr'
@@ -561,6 +562,7 @@ module backend 'core/host/appservice.bicep' = if (deploymentTarget == 'appservic
     appCommandLine: 'python3 -m gunicorn main:app'
     scmDoBuildDuringDeployment: true
     managedIdentity: true
+    userAssignedIdentityId: appSharedIdentity!.outputs.resourceId
     virtualNetworkSubnetId: usePrivateEndpoint ? isolation!.outputs.appSubnetId : ''
     publicNetworkAccess: publicNetworkAccess
     allowedOrigins: allowedOrigins
@@ -575,18 +577,19 @@ module backend 'core/host/appservice.bicep' = if (deploymentTarget == 'appservic
     appSettings: union(appEnvVariables, {
       AZURE_SERVER_APP_SECRET: serverAppSecret
       AZURE_CLIENT_APP_SECRET: clientAppSecret
+      AZURE_CLIENT_ID: appSharedIdentity!.outputs.clientId
     })
   }
 }
 
 // Azure container apps resources (Only deployed if deploymentTarget is 'containerapps')
 
-// User-assigned identity for pulling images from ACR
-module acaIdentity 'core/security/aca-identity.bicep' = if (deploymentTarget == 'containerapps') {
-  name: 'aca-identity'
+// Shared user-assigned identity for backend and zip-processor (ACR pull, Storage, Search, OpenAI, etc.)
+module appSharedIdentity 'core/security/aca-identity.bicep' = if (deploymentTarget == 'containerapps' || deploymentTarget == 'appservice') {
+  name: 'app-shared-identity'
   scope: resourceGroup
   params: {
-    identityName: acaIdentityName
+    identityName: appSharedIdentityName
     location: location
   }
 }
@@ -607,15 +610,17 @@ module containerApps 'core/host/container-apps.bicep' = if (deploymentTarget == 
   }
 }
 
+var acaBackendAppName = !empty(backendServiceName) ? backendServiceName : '${abbrs.webSitesContainerApps}backend-${resourceToken}'
+
 // Container Apps for the web application (Python Quart app with JS frontend)
-// Deployed after backend role assignments so acaIdentity has permissions before the app starts
+// Deployed after backend role assignments so app shared identity has permissions before the app starts
 module acaBackend 'core/host/container-app-upsert.bicep' = if (deploymentTarget == 'containerapps') {
   name: 'aca-web'
   scope: resourceGroup
   params: {
-    name: !empty(backendServiceName) ? backendServiceName : '${abbrs.webSitesContainerApps}backend-${resourceToken}'
+    name: acaBackendAppName
     location: location
-    identityName: (deploymentTarget == 'containerapps') ? acaIdentityName : ''
+    identityName: (deploymentTarget == 'containerapps') ? appSharedIdentity!.outputs.name : ''
     exists: webAppExists
     containerRegistryName: (deploymentTarget == 'containerapps') ? containerApps!.outputs.registryName : ''
     containerAppsEnvironmentName: (deploymentTarget == 'containerapps') ? containerApps!.outputs.environmentName : ''
@@ -627,13 +632,13 @@ module acaBackend 'core/host/container-app-upsert.bicep' = if (deploymentTarget 
     allowedOrigins: allowedOrigins
     env: union(appEnvVariables, {
       // For using managed identity to access Azure resources. See https://github.com/microsoft/azure-container-apps/issues/442
-      AZURE_CLIENT_ID: (deploymentTarget == 'containerapps') ? acaIdentity!.outputs.clientId : ''
+      AZURE_CLIENT_ID: (deploymentTarget == 'containerapps') ? appSharedIdentity!.outputs.clientId : ''
     })
-    secrets: useAuthentication ? {
+    secrets: (useAuthentication && !empty(clientAppSecret)) ? {
       azureclientappsecret: clientAppSecret
       azureserverappsecret: serverAppSecret
     } : {}
-    envSecrets: useAuthentication ? [
+    envSecrets: (useAuthentication && !empty(clientAppSecret)) ? [
       {
         name: 'AZURE_CLIENT_APP_SECRET'
         secretRef: 'azureclientappsecret'
@@ -643,27 +648,51 @@ module acaBackend 'core/host/container-app-upsert.bicep' = if (deploymentTarget 
         secretRef: 'azureserverappsecret'
       }
     ] : []
+    // Startup: traffic only after app responds on /health (avoids 502 connection refused)
+    // Liveness: restart container if /health stops responding
+    probes: [
+      {
+        type: 'Startup'
+        httpGet: {
+          path: '/health'
+          port: 8000
+        }
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        failureThreshold: 48
+      }
+      {
+        type: 'Liveness'
+        httpGet: {
+          path: '/health'
+          port: 8000
+        }
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        failureThreshold: 3
+      }
+    ]
   }
-  dependsOn: [
-    storageRoleBackend
-    searchRoleBackend
-    speechRoleBackend
-  ]
+  dependsOn: (deploymentTarget == 'containerapps' && webAppExists)
+    ? (useUserUpload ? [acaAuth, storageRoleBackend, searchRoleBackend, speechRoleBackend, zipProcessor] : [acaAuth, storageRoleBackend, searchRoleBackend, speechRoleBackend])
+    : (useUserUpload ? [storageRoleBackend, searchRoleBackend, speechRoleBackend, zipProcessor] : [storageRoleBackend, searchRoleBackend, speechRoleBackend])
 }
 
+// Configure Container Apps auth (Entra ID). When app already exists run first so we can clear secret ref before container update; on first deploy run after app is created.
 module acaAuth 'core/host/container-apps-auth.bicep' = if (deploymentTarget == 'containerapps' && !empty(clientAppId)) {
   name: 'aca-auth'
   scope: resourceGroup
   params: {
-    name: acaBackend!.outputs.name
+    name: acaBackendAppName
     clientAppId: clientAppId
     serverAppId: serverAppId
     clientSecretSettingName: !empty(clientAppSecret) ? 'azureclientappsecret' : ''
     authenticationIssuerUri: authenticationIssuerUri
     enableUnauthenticatedAccess: enableUnauthenticatedAccess
     blobContainerUri: 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${tokenStorageContainerName}'
-    appIdentityResourceId: (deploymentTarget == 'appservice') ? '' : acaBackend!.outputs.identityResourceId
+    appIdentityResourceId: (deploymentTarget == 'appservice') ? '' : appSharedIdentity!.outputs.resourceId
   }
+  dependsOn: webAppExists ? [] : [acaBackend]
 }
 
 // Zip Processor Function App (async zip upload processing when useUserUpload is true)
@@ -687,6 +716,8 @@ module zipProcessor 'app/zip-processor.bicep' = if (useUserUpload) {
     userStorageResourceGroupName: storageResourceGroup.name
     userStorageConnectionString: 'DefaultEndpointsProtocol=https;AccountName=${userStorageAccountNameResolved};AccountKey=${listKeys(resourceId(subscription().subscriptionId, storageResourceGroup.name, 'Microsoft.Storage/storageAccounts', userStorageAccountNameResolved), '2024-01-01').keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
     zipProcessorName: '${abbrs.webSitesFunctions}zpp-${resourceToken}'
+    appSharedIdentityResourceId: appSharedIdentity!.outputs.resourceId
+    appSharedIdentityClientId: appSharedIdentity!.outputs.clientId
   }
 }
 
@@ -1185,9 +1216,7 @@ module openAiRoleBackend 'core/security/role.bicep' = if (isAzureOpenAiHost && d
   scope: openAiResourceGroup
   name: 'openai-role-backend'
   params: {
-    principalId: (deploymentTarget == 'appservice')
-      ? backend!.outputs.identityPrincipalId
-      : acaIdentity!.outputs.principalId
+    principalId: appSharedIdentity!.outputs.principalId
     roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
     principalType: 'ServicePrincipal'
   }
@@ -1220,9 +1249,7 @@ module storageRoleBackend 'core/security/role.bicep' = {
   scope: storageResourceGroup
   name: 'storage-role-backend'
   params: {
-    principalId: (deploymentTarget == 'appservice')
-      ? backend!.outputs.identityPrincipalId
-      : acaIdentity!.outputs.principalId
+    principalId: appSharedIdentity!.outputs.principalId
     roleDefinitionId: '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1' // Storage Blob Data Reader
     principalType: 'ServicePrincipal'
   }
@@ -1232,9 +1259,7 @@ module storageOwnerRoleBackend 'core/security/role.bicep' = if (useUserUpload) {
   scope: storageResourceGroup
   name: 'storage-owner-role-backend'
   params: {
-    principalId: (deploymentTarget == 'appservice')
-      ? backend!.outputs.identityPrincipalId
-      : acaIdentity!.outputs.principalId
+    principalId: appSharedIdentity!.outputs.principalId
     roleDefinitionId: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' // Storage Blob Data Owner
     principalType: 'ServicePrincipal'
   }
@@ -1307,8 +1332,31 @@ module storageRoleContributorBackend 'core/security/role.bicep' = if (deployment
   scope: storageResourceGroup
   name: 'storage-role-contributor-aca-backend'
   params: {
-    principalId: acaIdentity!.outputs.principalId
+    principalId: appSharedIdentity!.outputs.principalId
     roleDefinitionId: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Storage Blob Data Contributor
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Shared identity: user storage Blob Data Owner + Queue Data Contributor (for zip-processor and backend when useUserUpload)
+module userStorageBlobOwnerAppIdentity 'core/security/storage-role.bicep' = if (useUserUpload) {
+  scope: storageResourceGroup
+  name: 'user-storage-blob-owner-app-identity'
+  params: {
+    storageAccountName: userStorage!.outputs.name
+    principalId: appSharedIdentity!.outputs.principalId
+    roleDefinitionId: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' // Storage Blob Data Owner
+    principalType: 'ServicePrincipal'
+  }
+}
+
+module userStorageQueueContributorAppIdentity 'core/security/storage-role.bicep' = if (useUserUpload) {
+  scope: storageResourceGroup
+  name: 'user-storage-queue-contributor-app-identity'
+  params: {
+    storageAccountName: userStorage!.outputs.name
+    principalId: appSharedIdentity!.outputs.principalId
+    roleDefinitionId: '974c5e8b-45b9-4653-ba55-5f855dd0fb88' // Storage Queue Data Contributor
     principalType: 'ServicePrincipal'
   }
 }
@@ -1319,9 +1367,7 @@ module searchRoleBackend 'core/security/role.bicep' = {
   scope: searchServiceResourceGroup
   name: 'search-role-backend'
   params: {
-    principalId: (deploymentTarget == 'appservice')
-      ? backend!.outputs.identityPrincipalId
-      : acaIdentity!.outputs.principalId
+    principalId: appSharedIdentity!.outputs.principalId
     roleDefinitionId: '1407120a-92aa-4202-b7e9-c0e197c71c8f'
     principalType: 'ServicePrincipal'
   }
@@ -1331,9 +1377,7 @@ module speechRoleBackend 'core/security/role.bicep' = {
   scope: speechResourceGroup
   name: 'speech-role-backend'
   params: {
-    principalId: (deploymentTarget == 'appservice')
-      ? backend!.outputs.identityPrincipalId
-      : acaIdentity!.outputs.principalId
+    principalId: appSharedIdentity!.outputs.principalId
     roleDefinitionId: 'f2dc8367-1007-4938-bd23-fe263f013447' // Cognitive Services Speech User
     principalType: 'ServicePrincipal'
   }
@@ -1346,9 +1390,7 @@ module cosmosDbRoleBackend 'core/security/documentdb-sql-role.bicep' = if (useAu
   name: 'cosmosdb-role-backend'
   params: {
     databaseAccountName: (useAuthentication && useChatHistoryCosmos) ? cosmosDb!.outputs.name : ''
-    principalId: (deploymentTarget == 'appservice')
-      ? backend!.outputs.identityPrincipalId
-      : acaIdentity!.outputs.principalId
+    principalId: appSharedIdentity!.outputs.principalId
     // Cosmos DB Built-in Data Contributor role
     roleDefinitionId: (useAuthentication && useChatHistoryCosmos)
       ? '/${subscription().id}/resourceGroups/${cosmosDb!.outputs.resourceGroupName}/providers/Microsoft.DocumentDB/databaseAccounts/${cosmosDb!.outputs.name}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
@@ -1457,9 +1499,7 @@ module searchReaderRoleBackend 'core/security/role.bicep' = if (useAuthenticatio
   scope: searchServiceResourceGroup
   name: 'search-reader-role-backend'
   params: {
-    principalId: (deploymentTarget == 'appservice')
-      ? backend!.outputs.identityPrincipalId
-      : acaIdentity!.outputs.principalId
+    principalId: appSharedIdentity!.outputs.principalId
     roleDefinitionId: 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
     principalType: 'ServicePrincipal'
   }
@@ -1470,23 +1510,30 @@ module searchContribRoleBackend 'core/security/role.bicep' = if (useUserUpload) 
   scope: searchServiceResourceGroup
   name: 'search-contrib-role-backend'
   params: {
-    principalId: (deploymentTarget == 'appservice')
-      ? backend!.outputs.identityPrincipalId
-      : acaIdentity!.outputs.principalId
+    principalId: appSharedIdentity!.outputs.principalId
     roleDefinitionId: '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
     principalType: 'ServicePrincipal'
   }
 }
 
-// For Azure AI Vision access by the backend
+// For Azure AI Vision access by the backend (and zip-processor when useUserUpload)
 module visionRoleBackend 'core/security/role.bicep' = if (useMultimodal) {
   scope: visionResourceGroup
   name: 'vision-role-backend'
   params: {
-    principalId: (deploymentTarget == 'appservice')
-      ? backend!.outputs.identityPrincipalId
-      : acaIdentity!.outputs.principalId
+    principalId: appSharedIdentity!.outputs.principalId
     roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908'
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// For Azure Content Understanding access by the backend (and zip-processor when useUserUpload)
+module contentUnderstandingRoleBackend 'core/security/role.bicep' = if (useMediaDescriberAzureCU) {
+  scope: contentUnderstandingResourceGroup
+  name: 'content-understanding-role-backend'
+  params: {
+    principalId: appSharedIdentity!.outputs.principalId
+    roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
     principalType: 'ServicePrincipal'
   }
 }

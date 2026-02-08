@@ -78,6 +78,9 @@ param serviceBinds array = []
 @description('The target port for the container')
 param targetPort int = 80
 
+@description('Health probes (Startup, Liveness, Readiness). Optional.')
+param probes array = []
+
 param allowedOrigins array = []
 
 resource existingApp 'Microsoft.App/containerApps@2023-05-02-preview' existing = if (exists) {
@@ -118,6 +121,7 @@ module app 'container-app.bicep' = {
     env: concat(envAsArray, envSecrets)
     imageName: !empty(imageName) ? imageName : exists ? existingApp!.properties.template.containers[0].image : ''
     targetPort: targetPort
+    probes: probes
     serviceBinds: serviceBinds
   }
 }

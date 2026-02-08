@@ -69,10 +69,7 @@ def setup_file_processors(
     content_understanding_endpoint: Optional[str] = None,
 ):
     """Setup file processors and figure processor for document ingestion."""
-    file_processors = build_file_processors(
-        azure_credential=azure_credential,
-        use_local_html_parser=local_html_parser,
-    )
+    file_processors = build_file_processors(azure_credential=azure_credential)
 
     figure_processor = setup_figure_processor(
         credential=azure_credential,

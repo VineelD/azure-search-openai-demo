@@ -8,6 +8,8 @@ param applicationInsightsName string = ''
 param appServicePlanId string
 param keyVaultName string = ''
 param managedIdentity bool = !empty(keyVaultName)
+@description('Resource ID of a user-assigned managed identity to assign to the app (e.g. for consistent auth across services). When set, this identity is used instead of system-assigned.')
+param userAssignedIdentityId string = ''
 param virtualNetworkSubnetId string = ''
 
 // Runtime Properties
@@ -89,7 +91,9 @@ resource appService 'Microsoft.Web/sites@2022-03-01' = {
   tags: tags
   kind: kind
   properties: appServiceProperties
-  identity: { type: managedIdentity ? 'SystemAssigned' : 'None' }
+  identity: !empty(userAssignedIdentityId)
+    ? { type: 'UserAssigned', userAssignedIdentities: { userAssignedIdentityId: {} } }
+    : (managedIdentity ? { type: 'SystemAssigned' } : { type: 'None' })
 
   resource configAppSettings 'config' = {
     name: 'appsettings'
@@ -175,6 +179,8 @@ resource applicationInsights 'Microsoft.Insights/components@2020-02-02' existing
 }
 
 output id string = appService.id
-output identityPrincipalId string = managedIdentity ? appService.identity.principalId : ''
+output identityPrincipalId string = !empty(userAssignedIdentityId)
+  ? reference(userAssignedIdentityId, '2023-01-31').properties.principalId
+  : (managedIdentity ? appService.identity.principalId : '')
 output name string = appService.name
 output uri string = 'https://${appService.properties.defaultHostName}'

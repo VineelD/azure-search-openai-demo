@@ -6,5 +6,7 @@ resource webIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-3
   location: location
 }
 
+output name string = webIdentity.name
 output principalId string = webIdentity.properties.principalId
 output clientId string = webIdentity.properties.clientId
+output resourceId string = webIdentity.id

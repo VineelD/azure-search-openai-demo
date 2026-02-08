@@ -32,7 +32,12 @@ param userStorageConnectionString string
 
 param zipProcessorName string
 
+// When provided, use this shared user-assigned identity instead of creating a dedicated zip-processor identity (roles assigned in main.bicep).
+param appSharedIdentityResourceId string = ''
+param appSharedIdentityClientId string = ''
+
 var abbrs = loadJsonContent('../abbreviations.json')
+var useSharedIdentity = !empty(appSharedIdentityResourceId) && !empty(appSharedIdentityClientId)
 var resourceToken = toLower(uniqueString(subscription().id, resourceGroup().id, location))
 
 var zipProcessorRuntimeStorageName = '${abbrs.storageStorageAccounts}zpp${take(resourceToken, 18)}'
@@ -97,12 +102,15 @@ module zipProcessorIdentity 'br/public:avm/res/managed-identity/user-assigned-id
   }
 }
 
-// Role assignments on runtime storage
+// Role assignments on runtime storage (use shared identity principal when useSharedIdentity; runtime storage is always in this RG)
+var zipProcessorPrincipalId = useSharedIdentity ? reference(appSharedIdentityResourceId, '2023-01-31').principalId : zipProcessorIdentity.outputs.principalId
+
+// Use distinct name suffix when using shared identity so we create new assignments instead of updating existing ones
 resource zipProcessorRuntimeStorageRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for role in runtimeStorageRoles: {
-  name: guid(zipProcessorRuntimeStorage.id, role.roleDefinitionId, 'zpp-storage-roles')
+  name: guid(zipProcessorRuntimeStorage.id, role.roleDefinitionId, useSharedIdentity ? 'zpp-storage-roles-shared' : 'zpp-storage-roles')
   scope: zipProcessorRuntimeStorage
   properties: {
-    principalId: zipProcessorIdentity.outputs.principalId
+    principalId: zipProcessorPrincipalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', role.roleDefinitionId)
   }
@@ -111,8 +119,8 @@ resource zipProcessorRuntimeStorageRoles 'Microsoft.Authorization/roleAssignment
   ]
 }]
 
-// Storage Blob Data Owner on user storage (required for blob trigger + read/write/delete for zip processing)
-module userStorageBlobOwner '../core/security/storage-role.bicep' = {
+// When not using shared identity, assign roles for the dedicated zip-processor identity (main.bicep assigns these for shared identity).
+module userStorageBlobOwner '../core/security/storage-role.bicep' = if (!useSharedIdentity) {
   scope: resourceGroup(userStorageResourceGroupName)
   name: 'zip-processor-user-storage-owner'
   params: {
@@ -123,8 +131,7 @@ module userStorageBlobOwner '../core/security/storage-role.bicep' = {
   }
 }
 
-// Storage Queue Data Contributor on user storage (required for blob trigger - it uses a queue on the connection storage)
-module userStorageQueueContributor '../core/security/storage-role.bicep' = {
+module userStorageQueueContributor '../core/security/storage-role.bicep' = if (!useSharedIdentity) {
   scope: resourceGroup(userStorageResourceGroupName)
   name: 'zip-processor-user-storage-queue-contributor'
   params: {
@@ -135,8 +142,7 @@ module userStorageQueueContributor '../core/security/storage-role.bicep' = {
   }
 }
 
-// Search Index Data Contributor
-module searchIndexContributor '../core/security/role.bicep' = {
+module searchIndexContributor '../core/security/role.bicep' = if (!useSharedIdentity) {
   scope: resourceGroup(searchServiceResourceGroupName)
   name: 'zip-processor-search-contributor'
   params: {
@@ -146,8 +152,7 @@ module searchIndexContributor '../core/security/role.bicep' = {
   }
 }
 
-// OpenAI Cognitive Services User
-module openAiUser '../core/security/role.bicep' = {
+module openAiUser '../core/security/role.bicep' = if (!useSharedIdentity) {
   scope: resourceGroup(openAiResourceGroupName)
   name: 'zip-processor-openai-user'
   params: {
@@ -157,8 +162,7 @@ module openAiUser '../core/security/role.bicep' = {
   }
 }
 
-// Vision Cognitive Services User (if multimodal)
-module visionUser '../core/security/role.bicep' = if (useMultimodal && !empty(visionServiceName)) {
+module visionUser '../core/security/role.bicep' = if (!useSharedIdentity && useMultimodal && !empty(visionServiceName)) {
   scope: resourceGroup(visionResourceGroupName)
   name: 'zip-processor-vision-user'
   params: {
@@ -168,8 +172,7 @@ module visionUser '../core/security/role.bicep' = if (useMultimodal && !empty(vi
   }
 }
 
-// Content Understanding Cognitive Services User (if media describer)
-module contentUnderstandingUser '../core/security/role.bicep' = if (useMediaDescriberAzureCU && !empty(contentUnderstandingServiceName)) {
+module contentUnderstandingUser '../core/security/role.bicep' = if (!useSharedIdentity && useMediaDescriberAzureCU && !empty(contentUnderstandingServiceName)) {
   scope: resourceGroup(contentUnderstandingResourceGroupName)
   name: 'zip-processor-content-understanding-user'
   params: {
@@ -180,6 +183,9 @@ module contentUnderstandingUser '../core/security/role.bicep' = if (useMediaDesc
 }
 
 // Zip Processor Function App (deployed after all role assignments so permissions are in place)
+var zipProcessorIdentityId = useSharedIdentity ? appSharedIdentityResourceId : zipProcessorIdentity.outputs.resourceId
+var zipProcessorIdentityClientId = useSharedIdentity ? appSharedIdentityClientId : zipProcessorIdentity.outputs.clientId
+
 module zipProcessorFunc 'zip-processor-app.bicep' = {
   name: 'zip-processor-func'
   params: {
@@ -192,24 +198,30 @@ module zipProcessorFunc 'zip-processor-app.bicep' = {
     runtimeVersion: '3.11'
     storageAccountName: zipProcessorRuntimeStorageName
     deploymentStorageContainerName: deploymentContainerName
-    identityId: zipProcessorIdentity.outputs.resourceId
-    identityClientId: zipProcessorIdentity.outputs.clientId
+    identityId: zipProcessorIdentityId
+    identityClientId: zipProcessorIdentityClientId
     azureWebJobsStorageConnectionString: 'DefaultEndpointsProtocol=https;AccountName=${zipProcessorRuntimeStorageName};AccountKey=${listKeys(resourceId(resourceGroup().name, 'Microsoft.Storage/storageAccounts', zipProcessorRuntimeStorageName), '2024-01-01').keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
     // Blob trigger uses connection "UserStorage" - must be connection string for reliable binding
-    appSettings: union(appEnvVariables, {
-      UserStorage: userStorageConnectionString
-    })
+    appSettings: union(
+      appEnvVariables,
+      {
+        UserStorage: userStorageConnectionString
+      },
+      useSharedIdentity ? { AZURE_CLIENT_ID: appSharedIdentityClientId } : {}
+    )
     instanceMemoryMB: 4096
     maximumInstanceCount: 10
   }
-  dependsOn: [
-    zipProcessorRuntimeStorageAccount
-    zipProcessorRuntimeStorageRoles
-    userStorageBlobOwner
-    userStorageQueueContributor
-    searchIndexContributor
-    openAiUser
-  ]
+  dependsOn: useSharedIdentity
+    ? [zipProcessorRuntimeStorageAccount, zipProcessorRuntimeStorageRoles]
+    : [
+      zipProcessorRuntimeStorageAccount
+      zipProcessorRuntimeStorageRoles
+      userStorageBlobOwner
+      userStorageQueueContributor
+      searchIndexContributor
+      openAiUser
+    ]
 }
 
 output name string = zipProcessorFunc.outputs.name
