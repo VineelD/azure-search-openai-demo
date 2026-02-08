@@ -98,6 +98,12 @@ class ChatReadRetrieveReadApproach(Approach):
         self.use_sharepoint_source = use_sharepoint_source
         self.retrieval_reasoning_effort = retrieval_reasoning_effort
 
+    def _model_and_deployment(self, overrides: dict[str, Any]) -> tuple[str, Optional[str]]:
+        """Resolve chat model and deployment from request overrides or defaults."""
+        model = overrides.get("chatgpt_model") or self.chatgpt_model
+        deployment = overrides.get("chatgpt_deployment") if "chatgpt_deployment" in overrides else self.chatgpt_deployment
+        return (model, deployment)
+
     def extract_followup_questions(self, content: Optional[str]):
         if content is None:
             return content, []
@@ -258,11 +264,12 @@ class ChatReadRetrieveReadApproach(Approach):
     ) -> tuple[ExtraInfo, Awaitable[ChatCompletion] | Awaitable[AsyncStream[ChatCompletionChunk]]]:
         use_agentic_knowledgebase = True if overrides.get("use_agentic_knowledgebase") else False
         original_user_query = messages[-1]["content"]
+        chat_model, chat_deployment = self._model_and_deployment(overrides)
 
-        reasoning_model_support = self.GPT_REASONING_MODELS.get(self.chatgpt_model)
+        reasoning_model_support = self.GPT_REASONING_MODELS.get(chat_model)
         if reasoning_model_support and (not reasoning_model_support.streaming and should_stream):
             raise Exception(
-                f"{self.chatgpt_model} does not support streaming. Please use a different model or disable streaming."
+                f"{chat_model} does not support streaming. Please use a different model or disable streaming."
             )
         if use_agentic_knowledgebase:
             if should_stream and overrides.get("use_web_source"):
@@ -280,7 +287,7 @@ class ChatReadRetrieveReadApproach(Approach):
                     id="no-final-call",
                     object="chat.completion",
                     created=0,
-                    model=self.chatgpt_model,
+                    model=chat_model,
                     choices=[
                         Choice(
                             message=ChatCompletionMessage(
@@ -295,8 +302,13 @@ class ChatReadRetrieveReadApproach(Approach):
 
             return (extra_info, return_answer())
 
+        system_template = (
+            "chat_answer_coding_agent.system.jinja2"
+            if overrides.get("assistant_mode") == "coding_agent"
+            else "chat_answer.system.jinja2"
+        )
         messages = self.prompt_manager.build_conversation(
-            system_template_path="chat_answer.system.jinja2",
+            system_template_path=system_template,
             system_template_variables=self.get_system_prompt_variables(overrides.get("prompt_template"))
             | {
                 "include_follow_up_questions": bool(overrides.get("suggest_followup_questions")),
@@ -315,11 +327,11 @@ class ChatReadRetrieveReadApproach(Approach):
         chat_coroutine = cast(
             Awaitable[ChatCompletion] | Awaitable[AsyncStream[ChatCompletionChunk]],
             self.create_chat_completion(
-                self.chatgpt_deployment,
-                self.chatgpt_model,
+                chat_deployment,
+                chat_model,
                 messages,
                 overrides,
-                self.get_response_token_limit(self.chatgpt_model, 1024),
+                self.get_response_token_limit(chat_model, 1024),
                 should_stream,
             ),
         )
@@ -328,8 +340,8 @@ class ChatReadRetrieveReadApproach(Approach):
                 title="Prompt to generate answer",
                 messages=messages,
                 overrides=overrides,
-                model=self.chatgpt_model,
-                deployment=self.chatgpt_deployment,
+                model=chat_model,
+                deployment=chat_deployment,
                 usage=None,
             )
         )
@@ -359,6 +371,8 @@ class ChatReadRetrieveReadApproach(Approach):
         if not isinstance(original_user_query, str):
             raise ValueError("The most recent message content must be a string.")
 
+        chat_model, chat_deployment = self._model_and_deployment(overrides)
+
         # STEP 1: Generate an optimized keyword search query based on the chat history and the last question
 
         rewrite_result = await self.rewrite_query(
@@ -368,11 +382,11 @@ class ChatReadRetrieveReadApproach(Approach):
                 "past_messages": messages[:-1],
             },
             overrides=overrides,
-            chatgpt_model=self.chatgpt_model,
-            chatgpt_deployment=self.chatgpt_deployment,
+            chatgpt_model=chat_model,
+            chatgpt_deployment=chat_deployment,
             user_query=original_user_query,
             response_token_limit=self.get_response_token_limit(
-                self.chatgpt_model, 100
+                chat_model, 100
             ),  # Setting too low risks malformed JSON, setting too high may affect performance
             tools=self.query_rewrite_tools,
             temperature=0.0,  # Minimize creativity for search query generation
@@ -420,8 +434,8 @@ class ChatReadRetrieveReadApproach(Approach):
                     title="Prompt to generate search query",
                     messages=rewrite_result.messages,
                     overrides=overrides,
-                    model=self.chatgpt_model,
-                    deployment=self.chatgpt_deployment,
+                    model=chat_model,
+                    deployment=chat_deployment,
                     usage=rewrite_result.completion.usage,
                     reasoning_effort=rewrite_result.reasoning_effort,
                 ),

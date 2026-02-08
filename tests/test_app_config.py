@@ -103,52 +103,20 @@ async def test_app_user_upload_requires_enforce_access_control(monkeypatch, mini
 
 
 @pytest.mark.asyncio
-async def test_app_user_upload_processors_docint(monkeypatch, minimal_env):
+async def test_app_user_upload_processors(monkeypatch, minimal_env):
     monkeypatch.setenv("AZURE_USERSTORAGE_ACCOUNT", "test-user-storage-account")
     monkeypatch.setenv("AZURE_USERSTORAGE_CONTAINER", "test-user-storage-container")
     monkeypatch.setenv("AZURE_ENFORCE_ACCESS_CONTROL", "true")
     monkeypatch.setenv("USE_USER_UPLOAD", "true")
-    monkeypatch.setenv("AZURE_DOCUMENTINTELLIGENCE_SERVICE", "test-docint-service")
 
     quart_app = app.create_app()
     async with quart_app.test_app():
         ingester = quart_app.config[app.CONFIG_INGESTER]
         assert ingester is not None
-        assert len(ingester.file_processors.keys()) == 15
-
-
-@pytest.mark.asyncio
-async def test_app_user_upload_processors_docint_localpdf(monkeypatch, minimal_env):
-    monkeypatch.setenv("AZURE_USERSTORAGE_ACCOUNT", "test-user-storage-account")
-    monkeypatch.setenv("AZURE_USERSTORAGE_CONTAINER", "test-user-storage-container")
-    monkeypatch.setenv("AZURE_ENFORCE_ACCESS_CONTROL", "true")
-    monkeypatch.setenv("USE_USER_UPLOAD", "true")
-    monkeypatch.setenv("AZURE_DOCUMENTINTELLIGENCE_SERVICE", "test-docint-service")
-    monkeypatch.setenv("USE_LOCAL_PDF_PARSER", "true")
-
-    quart_app = app.create_app()
-    async with quart_app.test_app():
-        ingester = quart_app.config[app.CONFIG_INGESTER]
-        assert ingester is not None
-        assert len(ingester.file_processors.keys()) == 15
-        assert ingester.file_processors[".pdf"] is not ingester.file_processors[".pptx"]
-
-
-@pytest.mark.asyncio
-async def test_app_user_upload_processors_docint_localhtml(monkeypatch, minimal_env):
-    monkeypatch.setenv("AZURE_USERSTORAGE_ACCOUNT", "test-user-storage-account")
-    monkeypatch.setenv("AZURE_USERSTORAGE_CONTAINER", "test-user-storage-container")
-    monkeypatch.setenv("AZURE_ENFORCE_ACCESS_CONTROL", "true")
-    monkeypatch.setenv("USE_USER_UPLOAD", "true")
-    monkeypatch.setenv("AZURE_DOCUMENTINTELLIGENCE_SERVICE", "test-docint-service")
-    monkeypatch.setenv("USE_LOCAL_HTML_PARSER", "true")
-
-    quart_app = app.create_app()
-    async with quart_app.test_app():
-        ingester = quart_app.config[app.CONFIG_INGESTER]
-        assert ingester is not None
-        assert len(ingester.file_processors.keys()) == 15
-        assert ingester.file_processors[".html"] is not ingester.file_processors[".pptx"]
+        # Text/code only (no PDF); zip → extract → chunk → embed → index
+        assert len(ingester.file_processors.keys()) == 12
+        assert ".html" in ingester.file_processors
+        assert ".tsx" in ingester.file_processors
 
 
 @pytest.mark.asyncio

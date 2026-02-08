@@ -339,7 +339,10 @@ To then limit access to a specific set of users or groups, you can follow the st
 
 ## Enabling login and document level access control
 
-By default, the deployed Azure web app allows users to chat with all your indexed data. You can enable an optional login system using Azure Active Directory to restrict access to indexed data based on the logged in user. Enable the optional login and document level access control system by following [this guide](./login_and_acl.md).
+By default, the deployed Azure web app allows users to chat with all your indexed data. You can enable an optional login system using **Microsoft Entra ID** (formerly Azure AD) to restrict access to indexed data based on the logged-in user.
+
+- **Quick path**: See [Create Microsoft Entra ID for authentication](entra_id_authentication_quickstart.md) to create the two Entra app registrations and wire them into the app.
+- **Full behavior**: Enable and configure login and document-level access control by following [Login and access control](login_and_acl.md).
 
 ## Enabling user document upload
 

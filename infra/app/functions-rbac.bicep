@@ -3,7 +3,6 @@ param principalId string
 param storageResourceGroupName string
 param searchServiceResourceGroupName string
 param openAiResourceGroupName string
-param documentIntelligenceResourceGroupName string
 param visionServiceName string = ''
 param visionResourceGroupName string = ''
 param contentUnderstandingServiceName string = ''
@@ -73,17 +72,6 @@ module openAiUserRole '../core/security/role.bicep' = {
   params: {
     principalId: principalId
     roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd' // Cognitive Services OpenAI User
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Document Intelligence: Cognitive Services User
-module documentIntelligenceUserRole '../core/security/role.bicep' = {
-  scope: resourceGroup(documentIntelligenceResourceGroupName)
-  name: 'function-doc-intelligence-user-${uniqueString(principalId)}'
-  params: {
-    principalId: principalId
-    roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
     principalType: 'ServicePrincipal'
   }
 }

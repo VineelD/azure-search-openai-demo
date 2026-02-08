@@ -32,6 +32,7 @@ def main() -> None:
         repo_root / "app" / "functions" / "document_extractor" / "prepdocslib",
         repo_root / "app" / "functions" / "figure_processor" / "prepdocslib",
         repo_root / "app" / "functions" / "text_processor" / "prepdocslib",
+        repo_root / "app" / "functions" / "zip_processor" / "prepdocslib",
     ]
 
     for target in targets:

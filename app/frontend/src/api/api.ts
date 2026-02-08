@@ -81,6 +81,134 @@ export async function uploadFileApi(request: FormData, idToken: string): Promise
     return dataResponse;
 }
 
+export type UploadZipResponse = {
+    message: string;
+    jobId?: string;
+    indexed?: string[];
+    skipped?: string[];
+    errors?: Array<{ file: string; error: string }>;
+    status?: string;
+};
+
+export type UploadZipStatusResponse = {
+    status: string;
+    message?: string;
+    files_total?: number;
+    files_done?: number;
+    pct_completion?: number;
+    pct_indexing?: number;
+    indexed_ids?: string[];
+};
+
+/** Chunk size for zip upload (4 MB) - avoids 413 from proxies */
+export const ZIP_CHUNK_SIZE = 4 * 1024 * 1024;
+
+export async function uploadZipApi(request: FormData, idToken: string): Promise<UploadZipResponse> {
+    const response = await fetch("/upload-zip", {
+        method: "POST",
+        headers: await getHeaders(idToken),
+        body: request
+    });
+
+    const data: UploadZipResponse = await response.json();
+    if (!response.ok) {
+        throw new Error(data.message || "Uploading zip failed");
+    }
+    return data;
+}
+
+/** Initialize a chunked zip upload; returns upload_id. */
+export async function uploadZipInitApi(idToken: string): Promise<{ upload_id: string }> {
+    const headers = await getHeaders(idToken);
+    const response = await fetch("/upload-zip-init", {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" }
+    });
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(data.message || "Failed to init zip upload");
+    }
+    return data;
+}
+
+/** Upload a single chunk of a zip file. */
+export async function uploadZipChunkApi(
+    uploadId: string,
+    chunkIndex: number,
+    totalChunks: number,
+    filename: string,
+    chunkBlob: Blob,
+    idToken: string
+): Promise<void> {
+    const headers = await getHeaders(idToken);
+    const response = await fetch("/upload-zip-chunk", {
+        method: "POST",
+        headers: {
+            ...headers,
+            "Content-Type": "application/octet-stream",
+            "X-Upload-Id": uploadId,
+            "X-Chunk-Index": String(chunkIndex),
+            "X-Total-Chunks": String(totalChunks),
+            "X-Filename": filename
+        },
+        body: chunkBlob
+    });
+    const text = await response.text();
+    let data: { message?: string };
+    try {
+        data = text ? JSON.parse(text) : {};
+    } catch {
+        data = {};
+    }
+    if (!response.ok) {
+        throw new Error(data.message || `Failed to upload chunk ${chunkIndex} (${response.status})`);
+    }
+}
+
+/** Complete chunked zip upload and process. */
+export async function uploadZipCompleteApi(
+    uploadId: string,
+    filename: string,
+    idToken: string
+): Promise<UploadZipResponse> {
+    const headers = await getHeaders(idToken);
+    const response = await fetch("/upload-zip-complete", {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ upload_id: uploadId, filename })
+    });
+    const text = await response.text();
+    let data: UploadZipResponse;
+    try {
+        data = text ? (JSON.parse(text) as UploadZipResponse) : { message: "Processing started." };
+    } catch {
+        throw new Error(
+            response.ok ? "Invalid response from server" : `Upload failed: ${response.status} ${response.statusText}`
+        );
+    }
+    if (!response.ok) {
+        throw new Error(data.message || `Failed to complete zip upload (${response.status})`);
+    }
+    return data;
+}
+
+/** Poll status of async zip processing job. */
+export async function uploadZipStatusApi(
+    uploadId: string,
+    idToken: string
+): Promise<UploadZipStatusResponse> {
+    const headers = await getHeaders(idToken);
+    const response = await fetch(`/upload-zip-status?upload_id=${encodeURIComponent(uploadId)}`, {
+        method: "GET",
+        headers
+    });
+    const data = (await response.json()) as UploadZipStatusResponse;
+    if (!response.ok) {
+        throw new Error("error" in data ? String(data.error) : "Failed to get status");
+    }
+    return data;
+}
+
 export async function deleteUploadedFileApi(filename: string, idToken: string): Promise<SimpleAPIResponse> {
     const headers = await getHeaders(idToken);
     const response = await fetch("/delete_uploaded", {

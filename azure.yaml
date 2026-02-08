@@ -40,6 +40,23 @@ services:
           run:  cd ../frontend;npm install;npm run build
           interactive: false
           continueOnError: false
+  # Un-comment this section if using USE_USER_UPLOAD (async zip processing to avoid HTTP timeout)
+  zip-processor:
+    project: ./app/functions/zip_processor
+    language: py
+    host: function
+    hooks:
+      prepackage:
+        windows:
+          shell: pwsh
+          run: python ../../../scripts/copy_prepdocslib.py
+          interactive: false
+          continueOnError: false
+        posix:
+          shell: sh
+          run: python ../../../scripts/copy_prepdocslib.py
+          interactive: false
+          continueOnError: false
   # Un-comment this section if using USE_CLOUD_INGESTION option
   # document-extractor:
   #   project: ./app/functions/document_extractor

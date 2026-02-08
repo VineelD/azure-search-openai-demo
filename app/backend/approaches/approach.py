@@ -66,6 +66,9 @@ class Document:
     category: Optional[str] = None
     sourcepage: Optional[str] = None
     sourcefile: Optional[str] = None
+    file_id: Optional[str] = None  # Stable id for the file (all chunks from same file share this)
+    filename: Optional[str] = None  # Base name only (e.g. App.tsx)
+    filepath: Optional[str] = None  # Full path/identifier (e.g. myapp__src__App.tsx)
     oids: Optional[list[str]] = None
     groups: Optional[list[str]] = None
     captions: Optional[list[QueryCaptionResult]] = None
@@ -82,6 +85,9 @@ class Document:
             "category": self.category,
             "sourcepage": self.sourcepage,
             "sourcefile": self.sourcefile,
+            "file_id": self.file_id,
+            "filename": self.filename,
+            "filepath": self.filepath,
             "oids": self.oids,
             "groups": self.groups,
             "captions": (
@@ -342,6 +348,9 @@ class Approach(ABC):
                         category=document.get("category"),
                         sourcepage=document.get("sourcepage"),
                         sourcefile=document.get("sourcefile"),
+                        file_id=document.get("file_id"),
+                        filename=document.get("filename"),
+                        filepath=document.get("filepath"),
                         oids=document.get("oids"),
                         groups=document.get("groups"),
                         captions=cast(list[QueryCaptionResult], document.get("@search.captions")),
@@ -604,6 +613,9 @@ class Approach(ABC):
                         category=ref.source_data.get("category"),
                         sourcepage=ref.source_data.get("sourcepage"),
                         sourcefile=ref.source_data.get("sourcefile"),
+                        file_id=ref.source_data.get("file_id"),
+                        filename=ref.source_data.get("filename"),
+                        filepath=ref.source_data.get("filepath"),
                         oids=ref.source_data.get("oids"),
                         groups=ref.source_data.get("groups"),
                         reranker_score=getattr(ref, "reranker_score", None),
@@ -768,7 +780,18 @@ class Approach(ABC):
                     cleaned = clean_source(" . ".join([cast(str, c.text) for c in doc.captions]))
                 else:
                     cleaned = clean_source(doc.content or "")
-                text_sources.append(f"{citation}: {cleaned}")
+                # Prefix with file metadata so the model can resolve cross-file references (e.g. imports)
+                meta_parts = []
+                if doc.filename:
+                    meta_parts.append(f"filename={doc.filename}")
+                if doc.filepath:
+                    meta_parts.append(f"filepath={doc.filepath}")
+                if doc.file_id:
+                    meta_parts.append(f"file_id={doc.file_id}")
+                if meta_parts:
+                    text_sources.append(f"[metadata: {', '.join(meta_parts)}]\n{citation}: {cleaned}")
+                else:
+                    text_sources.append(f"{citation}: {cleaned}")
 
             if download_image_sources and hasattr(doc, "images") and doc.images:
                 for img in doc.images:

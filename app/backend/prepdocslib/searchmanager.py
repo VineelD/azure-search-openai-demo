@@ -275,6 +275,24 @@ class SearchManager:
                         filterable=True,
                         facetable=False,
                     ),
+                    SimpleField(
+                        name="file_id",
+                        type="Edm.String",
+                        filterable=True,
+                        facetable=True,
+                    ),
+                    SimpleField(
+                        name="filename",
+                        type="Edm.String",
+                        filterable=True,
+                        facetable=True,
+                    ),
+                    SimpleField(
+                        name="filepath",
+                        type="Edm.String",
+                        filterable=True,
+                        facetable=True,
+                    ),
                 ]
                 if self.use_acls:
                     fields.append(oids_field)
@@ -357,6 +375,19 @@ class SearchManager:
                         ),
                     )
                     await search_index_client.create_or_update_index(existing_index)
+
+                for field_name, facetable in [("file_id", True), ("filename", True), ("filepath", True)]:
+                    if not any(field.name == field_name for field in existing_index.fields):
+                        logger.info("Adding %s field to index %s", field_name, self.search_info.index_name)
+                        existing_index.fields.append(
+                            SimpleField(
+                                name=field_name,
+                                type="Edm.String",
+                                filterable=True,
+                                facetable=facetable,
+                            ),
+                        )
+                        await search_index_client.create_or_update_index(existing_index)
 
                 if embedding_field and not any(
                     field.name == self.field_name_embedding for field in existing_index.fields
@@ -484,7 +515,7 @@ class SearchManager:
     async def create_knowledgebase(self):
         """Creates one or more Knowledge Bases in the search index based on desired knowledge sources."""
         if self.search_info.knowledgebase_name:
-            field_names = ["id", "sourcepage", "sourcefile", "content", "category"]
+            field_names = ["id", "sourcepage", "sourcefile", "content", "category", "file_id", "filename", "filepath"]
             if self.use_acls:
                 field_names.extend(["oids", "groups"])
             if self.search_images:
@@ -613,14 +644,21 @@ class SearchManager:
                                 for image in section.chunk.images
                             ]
                         }
+                    full_filename = section.content.filename()
+                    file_id = section.content.filename_to_id()
+                    # Use source_path (e.g. path inside zip) for display when set; else full_filename
+                    index_path = getattr(section.content, "source_path", None) or full_filename
                     document = {
-                        "id": f"{section.content.filename_to_id()}-page-{section_index + batch_index * MAX_BATCH_SIZE}",
+                        "id": f"{file_id}-page-{section_index + batch_index * MAX_BATCH_SIZE}",
                         "content": section.chunk.text,
                         "category": section.category,
                         "sourcepage": BlobManager.sourcepage_from_file_page(
-                            filename=section.content.filename(), page=section.chunk.page_num
+                            filename=full_filename, page=section.chunk.page_num
                         ),
-                        "sourcefile": section.content.filename(),
+                        "sourcefile": full_filename,
+                        "file_id": file_id,
+                        "filename": os.path.basename(index_path),
+                        "filepath": index_path,
                         **image_fields,
                         **section.content.acls,
                     }

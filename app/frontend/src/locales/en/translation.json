@@ -20,6 +20,11 @@
     },
     "upload": {
         "fileLabel": "Upload file:",
+        "zipLabel": "Upload React app (zip):",
+        "uploadingZip": "Processing zip...",
+        "uploadingZipChunk": "Uploading chunk {{current}} of {{total}}...",
+        "processingZip": "Processing zip...",
+        "zipOnly": "Please select a .zip file.",
         "uploadedFilesLabel": "Previously uploaded files:",
         "noFilesUploaded": "No files uploaded yet",
         "loading": "Loading...",
@@ -131,7 +136,17 @@
         },
         "useOidSecurityFilter": "Use oid security filter",
         "useGroupsSecurityFilter": "Use groups security filter",
-        "shouldStream": "Stream chat completion responses"
+        "shouldStream": "Stream chat completion responses",
+        "assistantAndModelSection": "Assistant & model",
+        "assistantMode": "Assistant mode",
+        "assistantModeOptions": {
+            "default": "General (document Q&A)",
+            "coding_agent": "Coding agent (test generation / codebase)"
+        },
+        "chatgptModelOverride": "Model override",
+        "chatgptModelOverridePlaceholder": "e.g. gpt-4o-mini (leave empty for default)",
+        "chatgptDeploymentOverride": "Deployment override",
+        "chatgptDeploymentOverridePlaceholder": "Azure deployment name (leave empty for default)"
     },
 
     "helpTexts": {
@@ -172,7 +187,10 @@
         "useGroupsSecurityFilter": "Filter search results based on the authenticated user's groups.",
         "useAgenticKnowledgeBase": "Use agentic retrieval from Azure AI Search for multi-query planning. Always uses semantic ranker.",
         "useWebSource": "Augment retrieval with web search results alongside your indexed data set.",
-        "useSharePointSource": "Augment retrieval with SharePoint content alongside your indexed data set."
+        "useSharePointSource": "Augment retrieval with SharePoint content alongside your indexed data set.",
+        "assistantMode": "General: answer from documents. Coding agent: help with code and generate test cases from the indexed codebase.",
+        "chatgptModelOverride": "Override the default chat model for this session (e.g. gpt-4, gpt-4o-mini). Future: can support other providers (e.g. Claude).",
+        "chatgptDeploymentOverride": "Override the Azure OpenAI deployment name used for chat. Leave empty to use the default deployment."
     },
 
     "overallSettings": "Overall settings",

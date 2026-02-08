@@ -50,6 +50,9 @@ export interface SettingsProps {
     showWebSourceOption?: boolean;
     useSharePointSource?: boolean;
     showSharePointSourceOption?: boolean;
+    assistantMode?: string;
+    chatgptModelOverride?: string;
+    chatgptDeploymentOverride?: string;
 }
 
 export const Settings = ({
@@ -92,7 +95,10 @@ export const Settings = ({
     useWebSource = false,
     showWebSourceOption = false,
     useSharePointSource = false,
-    showSharePointSourceOption = false
+    showSharePointSourceOption = false,
+    assistantMode = "",
+    chatgptModelOverride = "",
+    chatgptDeploymentOverride = ""
 }: SettingsProps) => {
     const { t } = useTranslation();
 
@@ -131,8 +137,19 @@ export const Settings = ({
     const shouldStreamFieldId = useId("shouldStreamField");
     const suggestFollowupQuestionsId = useId("suggestFollowupQuestions");
     const suggestFollowupQuestionsFieldId = useId("suggestFollowupQuestionsField");
+    const assistantModeId = useId("assistantMode");
+    const assistantModeFieldId = useId("assistantModeField");
+    const chatgptModelOverrideId = useId("chatgptModelOverride");
+    const chatgptModelOverrideFieldId = useId("chatgptModelOverrideField");
+    const chatgptDeploymentOverrideId = useId("chatgptDeploymentOverride");
+    const chatgptDeploymentOverrideFieldId = useId("chatgptDeploymentOverrideField");
 
     const webSourceDisablesStreamingAndFollowup = !!useWebSource;
+
+    const assistantModeOptions: IDropdownOption[] = [
+        { key: "", text: t("labels.assistantModeOptions.default") },
+        { key: "coding_agent", text: t("labels.assistantModeOptions.coding_agent") }
+    ];
 
     const retrievalReasoningOptions: IDropdownOption[] = [
         { key: "minimal", text: t("labels.agenticReasoningEffortOptions.minimal") },
@@ -173,6 +190,38 @@ export const Settings = ({
                     />
                 </>
             )}
+
+            <h3 className={styles.sectionHeader}>{t("labels.assistantAndModelSection")}</h3>
+            <Dropdown
+                id={assistantModeFieldId}
+                className={styles.settingsSeparator}
+                label={t("labels.assistantMode")}
+                selectedKey={assistantMode}
+                onChange={(_ev, option) => onChange("assistantMode", option?.key?.toString() ?? "")}
+                aria-labelledby={assistantModeId}
+                options={assistantModeOptions}
+                onRenderLabel={props => renderLabel(props, assistantModeId, assistantModeFieldId, t("helpTexts.assistantMode"))}
+            />
+            <TextField
+                id={chatgptModelOverrideFieldId}
+                className={styles.settingsSeparator}
+                label={t("labels.chatgptModelOverride")}
+                value={chatgptModelOverride}
+                onChange={(_ev, newValue) => onChange("chatgptModelOverride", newValue ?? "")}
+                placeholder={t("labels.chatgptModelOverridePlaceholder")}
+                aria-labelledby={chatgptModelOverrideId}
+                onRenderLabel={props => renderLabel(props, chatgptModelOverrideId, chatgptModelOverrideFieldId, t("helpTexts.chatgptModelOverride"))}
+            />
+            <TextField
+                id={chatgptDeploymentOverrideFieldId}
+                className={styles.settingsSeparator}
+                label={t("labels.chatgptDeploymentOverride")}
+                value={chatgptDeploymentOverride}
+                onChange={(_ev, newValue) => onChange("chatgptDeploymentOverride", newValue ?? "")}
+                placeholder={t("labels.chatgptDeploymentOverridePlaceholder")}
+                aria-labelledby={chatgptDeploymentOverrideId}
+                onRenderLabel={props => renderLabel(props, chatgptDeploymentOverrideId, chatgptDeploymentOverrideFieldId, t("helpTexts.chatgptDeploymentOverride"))}
+            />
 
             <h3 className={styles.sectionHeader}>{t("searchSettings")}</h3>
 

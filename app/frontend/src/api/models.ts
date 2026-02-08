@@ -30,6 +30,12 @@ export type ChatAppRequestOverrides = {
     use_agentic_knowledgebase: boolean;
     use_web_source?: boolean;
     use_sharepoint_source?: boolean;
+    /** Assistant mode: "default" (general Q&A) or "coding_agent" (test generation / codebase help) */
+    assistant_mode?: string;
+    /** Override chat model (e.g. "gpt-4", "gpt-4o-mini"). Leave empty for default. */
+    chatgpt_model?: string;
+    /** Override Azure OpenAI deployment name. Leave empty for default. */
+    chatgpt_deployment?: string;
 };
 
 export type ResponseMessage = {

@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 import os
 import re
@@ -384,6 +385,104 @@ class AdlsBlobManager(BaseBlobManager):
                 logger.exception("Error listing uploaded files", error)
             # Return empty list for 404 (no directory) as this is expected for new users
         return files
+
+    # Session storage for chunked zip upload (shared across replicas)
+    SESSION_PATH_PREFIX = "_sessions"
+
+    async def upload_session_chunk(self, upload_id: str, chunk_index: int, data: bytes) -> None:
+        """Store a chunk for a chunked zip upload session. Path: _sessions/{upload_id}/chunk_00000"""
+        path = f"{self.SESSION_PATH_PREFIX}/{upload_id}/chunk_{chunk_index:05d}"
+        file_client = self.file_system_client.get_file_client(path)
+        await file_client.upload_data(io.BytesIO(data), overwrite=True)
+
+    async def get_session_chunks(self, upload_id: str) -> bytes:
+        """Download all chunks for a session, concatenate and return."""
+        prefix = f"{self.SESSION_PATH_PREFIX}/{upload_id}/"
+        paths = []
+        try:
+            async for path in self.file_system_client.get_paths(path=prefix):
+                if path.is_directory:
+                    continue
+                paths.append(path.name)
+        except ResourceNotFoundError:
+            return b""
+        paths.sort(key=lambda p: int(p.split("chunk_")[1]))
+        data = b""
+        for p in paths:
+            file_client = self.file_system_client.get_file_client(p)
+            download_response = await file_client.download_file()
+            data += await download_response.readall()
+        return data
+
+    async def delete_session(self, upload_id: str, keep_progress: bool = False) -> None:
+        """Delete all chunks and job for a session. If keep_progress, retain _progress.json for status polling."""
+        prefix = f"{self.SESSION_PATH_PREFIX}/{upload_id}/"
+        try:
+            async for path in self.file_system_client.get_paths(path=prefix):
+                if path.is_directory:
+                    continue
+                if keep_progress and "_progress.json" in path.name:
+                    continue
+                file_client = self.file_system_client.get_file_client(path.name)
+                await file_client.delete_file()
+        except ResourceNotFoundError:
+            pass
+
+    async def upload_session_job(self, upload_id: str, filename: str, user_oid: str) -> None:
+        """Write a job blob to trigger async processing. Path: _sessions/{upload_id}/_job.json"""
+        path = f"{self.SESSION_PATH_PREFIX}/{upload_id}/_job.json"
+        job = {"filename": filename, "user_oid": user_oid}
+        file_client = self.file_system_client.get_file_client(path)
+        await file_client.upload_data(
+            io.BytesIO(json.dumps(job).encode("utf-8")), overwrite=True
+        )
+
+    async def upload_session_progress(
+        self,
+        upload_id: str,
+        status: str,
+        files_total: int,
+        files_done: int,
+        indexed_ids: list[str],
+        user_oid: str,
+    ) -> None:
+        """Write progress blob for async zip processing. Path: _sessions/{upload_id}/_progress.json"""
+        path = f"{self.SESSION_PATH_PREFIX}/{upload_id}/_progress.json"
+        pct_completion = round(100 * files_done / files_total, 1) if files_total > 0 else 100
+        progress = {
+            "status": status,
+            "files_total": files_total,
+            "files_done": files_done,
+            "pct_completion": pct_completion,
+            "pct_indexing": pct_completion,
+            "indexed_ids": indexed_ids,
+            "user_oid": user_oid,
+        }
+        file_client = self.file_system_client.get_file_client(path)
+        await file_client.upload_data(
+            io.BytesIO(json.dumps(progress).encode("utf-8")), overwrite=True
+        )
+
+    async def get_session_progress(self, upload_id: str) -> Optional[dict]:
+        """Read progress blob for async zip processing. Returns None if not found."""
+        path = f"{self.SESSION_PATH_PREFIX}/{upload_id}/_progress.json"
+        try:
+            file_client = self.file_system_client.get_file_client(path)
+            download_response = await file_client.download_file()
+            data = await download_response.readall()
+            return json.loads(data.decode("utf-8"))
+        except ResourceNotFoundError:
+            return None
+
+    async def session_job_exists(self, upload_id: str) -> bool:
+        """Check if _job.json exists (job queued, processor not started yet)."""
+        path = f"{self.SESSION_PATH_PREFIX}/{upload_id}/_job.json"
+        try:
+            file_client = self.file_system_client.get_file_client(path)
+            await file_client.get_file_properties()
+            return True
+        except ResourceNotFoundError:
+            return False
 
 
 class BlobManager(BaseBlobManager):

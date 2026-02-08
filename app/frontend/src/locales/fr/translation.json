@@ -20,6 +20,11 @@
     },
     "upload": {
         "fileLabel": "Télécharger le fichier:",
+        "zipLabel": "Télécharger l'app React (zip):",
+        "uploadingZip": "Traitement du zip...",
+        "uploadingZipChunk": "Téléchargement du fragment {{current}} sur {{total}}...",
+        "processingZip": "Traitement du zip...",
+        "zipOnly": "Veuillez sélectionner un fichier .zip.",
         "uploadedFilesLabel": "Fichiers précédemment téléchargés:",
         "noFilesUploaded": "Aucun fichier téléchargé pour le moment",
         "loading": "Chargement...",
@@ -131,7 +136,17 @@
         },
         "useOidSecurityFilter": "Utiliser le filtre de sécurité oid",
         "useGroupsSecurityFilter": "Utiliser le filtre de sécurité de groupe",
-        "shouldStream": "Diffuser en continu les réponses"
+        "shouldStream": "Diffuser en continu les réponses",
+        "assistantAndModelSection": "Assistant et modèle",
+        "assistantMode": "Mode assistant",
+        "assistantModeOptions": {
+            "default": "Général (Q&A documents)",
+            "coding_agent": "Agent de code (génération de tests / base de code)"
+        },
+        "chatgptModelOverride": "Modèle (remplacement)",
+        "chatgptModelOverridePlaceholder": "ex. gpt-4o-mini (vide = défaut)",
+        "chatgptDeploymentOverride": "Déploiement (remplacement)",
+        "chatgptDeploymentOverridePlaceholder": "Nom du déploiement Azure (vide = défaut)"
     },
 
     "helpTexts": {
@@ -175,7 +190,10 @@
         "useGroupsSecurityFilter": "Filtrez les résultats de recherche en fonction des groupes de l'utilisateur authentifié.",
         "useAgenticKnowledgeBase": "Utilisez la récupération agentique d'Azure AI Search pour la planification multi-requêtes. Utilise toujours le classement sémantique.",
         "useWebSource": "Augmentez la récupération avec des résultats de recherche web parallèlement à votre ensemble de données indexé.",
-        "useSharePointSource": "Augmentez la récupération avec du contenu SharePoint parallèlement à votre ensemble de données indexé."
+        "useSharePointSource": "Augmentez la récupération avec du contenu SharePoint parallèlement à votre ensemble de données indexé.",
+        "assistantMode": "Général : réponses à partir des documents. Agent de code : aide au code et génération de tests à partir du code indexé.",
+        "chatgptModelOverride": "Remplace le modèle de chat par défaut pour cette session.",
+        "chatgptDeploymentOverride": "Remplace le nom du déploiement Azure OpenAI pour le chat."
     },
 
     "overallSettings": "Paramètres généraux",

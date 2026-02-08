@@ -41,18 +41,6 @@
     "contentUnderstandingResourceGroupName": {
       "value": "${AZURE_CONTENT_UNDERSTANDING_RESOURCE_GROUP}"
     },
-    "documentIntelligenceServiceName": {
-      "value": "${AZURE_DOCUMENTINTELLIGENCE_SERVICE}"
-    },
-    "documentIntelligenceResourceGroupName": {
-      "value": "${AZURE_DOCUMENTINTELLIGENCE_RESOURCE_GROUP}"
-    },
-    "documentIntelligenceSkuName": {
-      "value": "${AZURE_DOCUMENTINTELLIGENCE_SKU=S0}"
-    },
-    "documentIntelligenceResourceGroupLocation": {
-      "value": "${AZURE_DOCUMENTINTELLIGENCE_LOCATION}"
-    },
     "searchIndexName": {
       "value": "${AZURE_SEARCH_INDEX=gptkbindex}"
     },
@@ -322,12 +310,6 @@
     },
     "useUserUpload": {
       "value": "${USE_USER_UPLOAD}"
-    },
-    "useLocalPdfParser": {
-      "value": "${USE_LOCAL_PDF_PARSER}"
-    },
-    "useLocalHtmlParser": {
-      "value": "${USE_LOCAL_HTML_PARSER}"
     },
     "runningOnGh": {
       "value": "${GITHUB_ACTIONS}"

@@ -5,6 +5,8 @@ import logging
 import mimetypes
 import os
 import time
+import uuid
+import zipfile
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
@@ -345,6 +347,12 @@ async def speech():
         return jsonify({"error": str(e)}), 500
 
 
+# Limits for zip upload (React app codebase)
+MAX_ZIP_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
+MAX_ZIP_FILE_COUNT = 30000
+ZIP_CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB per chunk (avoids 413 from proxies)
+
+
 @bp.post("/upload")
 @authenticated
 async def upload(auth_claims: dict[str, Any]):
@@ -363,6 +371,216 @@ async def upload(auth_claims: dict[str, Any]):
     except Exception as error:
         current_app.logger.error("Error uploading file: %s", error)
         return jsonify({"message": "Error uploading file, check server logs for details.", "status": "failed"}), 500
+
+
+@bp.post("/upload-zip")
+@authenticated
+async def upload_zip(auth_claims: dict[str, Any]):
+    """Accept a .zip file (e.g. React app), unzip, upload each file to blob, and index supported files."""
+    request_files = await request.files
+    if "file" not in request_files:
+        return jsonify({"message": "No file part in the request", "status": "failed"}), 400
+
+    user_oid = auth_claims["oid"]
+    file = request_files.getlist("file")[0]
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        return jsonify({"message": "File must be a .zip archive", "status": "failed"}), 400
+
+    try:
+        data = await file.read()
+        if len(data) > MAX_ZIP_SIZE_BYTES:
+            return jsonify({
+                "message": f"Zip size exceeds limit of {MAX_ZIP_SIZE_BYTES // (1024*1024)} MB",
+                "status": "failed",
+            }), 400
+
+        adls_manager: AdlsBlobManager = current_app.config[CONFIG_USER_BLOB_MANAGER]
+        ingester: UploadUserFileStrategy = current_app.config[CONFIG_INGESTER]
+        supported_extensions = set(ingester.file_processors.keys())
+        zip_basename = os.path.splitext(os.path.basename(file.filename))[0]
+        if not zip_basename:
+            zip_basename = "archive"
+
+        indexed = []
+        skipped = []
+        errors = []
+
+        with zipfile.ZipFile(io.BytesIO(data), "r") as zf:
+            members = [m for m in zf.namelist() if not m.endswith("/")]
+            if len(members) > MAX_ZIP_FILE_COUNT:
+                return jsonify({
+                    "message": f"Zip contains too many files (max {MAX_ZIP_FILE_COUNT})",
+                    "status": "failed",
+                }), 400
+
+            for i, name in enumerate(members):
+                # Normalize path and get flattened blob name (no subdirs for list_blobs compatibility)
+                rel_path = name.replace("\\", "/").lstrip("/")
+                ext = os.path.splitext(rel_path)[1].lower()
+                if ext not in supported_extensions:
+                    skipped.append(rel_path)
+                    continue
+                flattened = f"{zip_basename}__{rel_path.replace('/', '__')}"
+
+                try:
+                    raw = zf.read(name)
+                    content = io.BytesIO(raw)
+                    content.name = flattened  # type: ignore[attr-defined]
+                    file_url = await adls_manager.upload_blob(content, flattened, user_oid)
+                    content.seek(0)
+                    await ingester.add_file(
+                        File(content=content, url=file_url, acls={"oids": [user_oid]}),
+                        user_oid=user_oid,
+                    )
+                    indexed.append(rel_path)
+                except Exception as e:
+                    current_app.logger.exception("Error processing %s from zip", rel_path)
+                    errors.append({"file": rel_path, "error": str(e)})
+
+        return jsonify({
+            "message": f"Processed zip: {len(indexed)} indexed, {len(skipped)} skipped (unsupported type), {len(errors)} errors",
+            "indexed": indexed,
+            "skipped": skipped,
+            "errors": errors,
+        }), 200
+    except zipfile.BadZipFile:
+        return jsonify({"message": "Invalid or corrupted zip file", "status": "failed"}), 400
+    except Exception as error:
+        current_app.logger.exception("Error processing zip upload")
+        return jsonify({
+            "message": "Error processing zip, check server logs for details.",
+            "status": "failed",
+        }), 500
+
+
+# Chunked zip upload (avoids 413 Content Too Large from proxies)
+# Sessions stored in blob storage so all replicas can access them.
+# Client: 1) POST /upload-zip-init -> { upload_id }
+#         2) POST /upload-zip-chunk for each chunk (raw binary, headers: X-Upload-Id, X-Chunk-Index, X-Total-Chunks, X-Filename)
+#         3) POST /upload-zip-complete with { upload_id, filename } -> same response as /upload-zip
+
+
+@bp.post("/upload-zip-init")
+@authenticated
+async def upload_zip_init(auth_claims: dict[str, Any]):
+    """Start a chunked zip upload; returns upload_id for subsequent chunk requests."""
+    upload_id = str(uuid.uuid4())
+    return jsonify({"upload_id": upload_id}), 200
+
+
+@bp.post("/upload-zip-chunk")
+@authenticated
+async def upload_zip_chunk(auth_claims: dict[str, Any]):
+    """Accept a single chunk of a zip file (raw binary body)."""
+    upload_id = request.headers.get("X-Upload-Id")
+    chunk_index = request.headers.get("X-Chunk-Index")
+    total_chunks = request.headers.get("X-Total-Chunks")
+    filename = request.headers.get("X-Filename")
+    if not all([upload_id, chunk_index is not None, total_chunks, filename]):
+        return jsonify({
+            "message": "Missing headers: X-Upload-Id, X-Chunk-Index, X-Total-Chunks, X-Filename",
+            "status": "failed",
+        }), 400
+    if not filename.lower().endswith(".zip"):
+        return jsonify({"message": "File must be a .zip archive", "status": "failed"}), 400
+
+    try:
+        idx = int(chunk_index)
+        total = int(total_chunks)
+        if idx < 0 or total < 1 or idx >= total:
+            return jsonify({"message": "Invalid chunk index or total", "status": "failed"}), 400
+        data = await request.get_data()
+        if len(data) > ZIP_CHUNK_SIZE:
+            return jsonify({
+                "message": f"Chunk exceeds max size of {ZIP_CHUNK_SIZE // (1024*1024)} MB",
+                "status": "failed",
+            }), 400
+
+        adls_manager: AdlsBlobManager = current_app.config[CONFIG_USER_BLOB_MANAGER]
+        await adls_manager.upload_session_chunk(upload_id, idx, data)
+        return jsonify({"chunk_index": idx, "status": "received"}), 200
+    except (ValueError, TypeError):
+        return jsonify({"message": "Invalid chunk index or total", "status": "failed"}), 400
+
+
+@bp.post("/upload-zip-complete")
+@authenticated
+async def upload_zip_complete(auth_claims: dict[str, Any]):
+    """Enqueue zip job for async processing; returns immediately to avoid HTTP timeout.
+    An Azure Function (zip-processor) is triggered when _job.json is written to blob."""
+    request_json = await request.get_json() or {}
+    upload_id = request_json.get("upload_id")
+    filename = request_json.get("filename")
+    if not upload_id or not filename:
+        return jsonify({
+            "message": "Missing upload_id or filename in request body",
+            "status": "failed",
+        }), 400
+    if not filename.lower().endswith(".zip"):
+        return jsonify({"message": "File must be a .zip archive", "status": "failed"}), 400
+
+    adls_manager: AdlsBlobManager = current_app.config[CONFIG_USER_BLOB_MANAGER]
+    try:
+        data = await adls_manager.get_session_chunks(upload_id)
+    except Exception:
+        current_app.logger.exception("Error reading session chunks for %s", upload_id)
+        return jsonify({"message": "Invalid or expired upload_id", "status": "failed"}), 400
+
+    if not data:
+        return jsonify({"message": "Invalid or expired upload_id", "status": "failed"}), 400
+
+    if len(data) > MAX_ZIP_SIZE_BYTES:
+        return jsonify({
+            "message": f"Zip size exceeds limit of {MAX_ZIP_SIZE_BYTES // (1024*1024)} MB",
+            "status": "failed",
+        }), 400
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data), "r") as zf:
+            members = [m for m in zf.namelist() if not m.endswith("/")]
+            if len(members) > MAX_ZIP_FILE_COUNT:
+                return jsonify({
+                    "message": f"Zip contains too many files (max {MAX_ZIP_FILE_COUNT})",
+                    "status": "failed",
+                }), 400
+    except zipfile.BadZipFile:
+        return jsonify({"message": "Invalid or corrupted zip file", "status": "failed"}), 400
+
+    user_oid = auth_claims["oid"]
+    try:
+        await adls_manager.upload_session_job(upload_id, filename, user_oid)
+    except Exception:
+        current_app.logger.exception("Error writing job blob for %s", upload_id)
+        return jsonify({
+            "message": "Error enqueueing zip job, check server logs.",
+            "status": "failed",
+        }), 500
+
+    return jsonify({
+        "message": "Processing started. Your files will be indexed shortly. This may take several minutes for large archives.",
+        "jobId": upload_id,
+        "status": "queued",
+    }), 200
+
+
+@bp.get("/upload-zip-status")
+@authenticated
+async def upload_zip_status(auth_claims: dict[str, Any]):
+    """Return progress for an async zip upload job. Poll this after upload-zip-complete."""
+    upload_id = request.args.get("upload_id")
+    if not upload_id:
+        return jsonify({"error": "upload_id required"}), 400
+    adls_manager: AdlsBlobManager = current_app.config[CONFIG_USER_BLOB_MANAGER]
+    progress = await adls_manager.get_session_progress(upload_id)
+    if progress is None:
+        job_exists = await adls_manager.session_job_exists(upload_id)
+        if job_exists:
+            return jsonify({"status": "queued", "message": "Job queued, processing will start shortly"}), 200
+        return jsonify({"status": "unknown", "message": "Job not found or session expired"}), 200
+    user_oid = auth_claims["oid"]
+    if progress.get("user_oid") != user_oid:
+        return jsonify({"error": "Access denied"}), 403
+    return jsonify(progress), 200
 
 
 @bp.post("/delete_uploaded")
@@ -608,9 +826,6 @@ async def setup_clients():
         # Set up ingester
         file_processors, figure_processor = setup_file_processors(
             azure_credential=azure_credential,
-            document_intelligence_service=os.getenv("AZURE_DOCUMENTINTELLIGENCE_SERVICE"),
-            local_pdf_parser=os.getenv("USE_LOCAL_PDF_PARSER", "").lower() == "true",
-            local_html_parser=os.getenv("USE_LOCAL_HTML_PARSER", "").lower() == "true",
             use_content_understanding=os.getenv("USE_CONTENT_UNDERSTANDING", "").lower() == "true",
             content_understanding_endpoint=os.getenv("AZURE_CONTENTUNDERSTANDING_ENDPOINT"),
             use_multimodal=USE_MULTIMODAL,

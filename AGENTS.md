@@ -17,6 +17,7 @@ If necessary, edit this file to ensure it accurately reflects the current state 
       * app/backend/approaches/prompts/chat_query_rewrite_tools.json: Tools used by the query rewriting prompt
       * app/backend/approaches/prompts/chat_answer.system.jinja2: Jinja2 template for the system message used by the Chat approach to answer questions
       * app/backend/approaches/prompts/chat_answer.user.jinja2: Jinja2 template for the user message used by the Chat approach, including sources
+ * app/backend/approaches/prompts/chat_answer_coding_agent.system.jinja2: System prompt for "Coding agent" mode (test generation / codebase Q&A)
     * app/backend/prepdocslib: Contains the document ingestion library used by both local and cloud ingestion
       * app/backend/prepdocslib/blobmanager.py: Manages uploads to Azure Blob Storage
       * app/backend/prepdocslib/cloudingestionstrategy.py: Builds the Azure AI Search indexer and skillset for the cloud ingestion pipeline
@@ -32,7 +33,6 @@ If necessary, edit this file to ensure it accurately reflects the current state 
       * app/backend/prepdocslib/mediadescriber.py: Interfaces for describing images (Azure OpenAI GPT-4o, Content Understanding)
       * app/backend/prepdocslib/page.py: Data classes for pages, images, and chunks
       * app/backend/prepdocslib/parser.py: Base parser interface
-      * app/backend/prepdocslib/pdfparser.py: Parses PDFs using Azure Document Intelligence or local parser
       * app/backend/prepdocslib/searchmanager.py: Manages Azure AI Search index creation and updates
       * app/backend/prepdocslib/servicesetup.py: Shared service setup helpers for OpenAI, embeddings, blob storage, etc.
       * app/backend/prepdocslib/strategy.py: Base strategy interface for document ingestion
@@ -40,7 +40,7 @@ If necessary, edit this file to ensure it accurately reflects the current state 
       * app/backend/prepdocslib/textprocessor.py: Processes text chunks for cloud ingestion (merges figures, generates embeddings)
       * app/backend/prepdocslib/textsplitter.py: Splits text into chunks using different strategies
     * app/backend/app.py: The main entry point for the backend application.
-  * app/functions: Azure Functions used for cloud ingestion custom skills (document extraction, figure processing, text processing). Each function bundles a synchronized copy of `prepdocslib`; run `python scripts/copy_prepdocslib.py` to refresh the local copies if you modify the library.
+  * app/functions: Azure Functions for cloud ingestion skills (document-extractor, figure-processor, text-processor) and async zip processing (zip_processor). Each function bundles a synchronized copy of `prepdocslib`; run `python scripts/copy_prepdocslib.py` to refresh the local copies if you modify the library.
   * app/frontend: Contains the React frontend code, built with TypeScript, built with vite.
     * app/frontend/src/api: Contains the API client code for communicating with the backend.
     * app/frontend/src/components: Contains the React components for the frontend.
@@ -57,6 +57,14 @@ If necessary, edit this file to ensure it accurately reflects the current state 
     * app/frontend/src/pages: Contains the main pages of the application
 * infra: Contains the Bicep templates for provisioning Azure resources.
 * tests: Contains the test code, including e2e tests, app integration tests, and unit tests.
+
+## Zip upload (React app / codebase)
+
+When user upload is enabled, users can upload a .zip file (e.g. a React app) via `POST /upload-zip`. The backend unzips the archive, uploads each file to the user's blob directory with flattened names (e.g. `myapp__src__App.tsx`), and indexes files with supported extensions (including .ts, .tsx, .js, .jsx, .mjs, .cjs). Limits: 50 MB zip size, 30000 files max. Supported code extensions are registered in `prepdocslib/servicesetup.build_file_processors`.
+
+To avoid 413 Content Too Large errors from proxies, the frontend uses **chunked upload** (4 MB per chunk): `POST /upload-zip-init` → `POST /upload-zip-chunk` (per chunk) → `POST /upload-zip-complete`.
+
+To avoid HTTP timeout when processing large zips (e.g. 30k files), `upload-zip-complete` **enqueues** a job (writes `_job.json` to blob) and returns 200 immediately. An **Azure Function** `zip-processor` (blob trigger) processes the zip asynchronously. See [docs/zip_processor_setup.md](docs/zip_processor_setup.md) for setup.
 
 ## Adding new data
 

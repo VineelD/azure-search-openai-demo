@@ -89,6 +89,9 @@ const Chat = () => {
     const [sharePointSourceEnabled, setSharePointSourceEnabled] = useState<boolean>(false);
     const [useAgenticKnowledgeBase, setUseAgenticRetrieval] = useState<boolean>(false);
     const [hideMinimalRetrievalReasoningOption, setHideMinimalRetrievalReasoningOption] = useState<boolean>(false);
+    const [assistantMode, setAssistantMode] = useState<string>("");
+    const [chatgptModelOverride, setChatgptModelOverride] = useState<string>("");
+    const [chatgptDeploymentOverride, setChatgptDeploymentOverride] = useState<string>("");
     const streamingDisabledByOverrides = useAgenticKnowledgeBase && webSourceEnabled;
 
     const audio = useRef(new Audio()).current;
@@ -290,7 +293,10 @@ const Chat = () => {
                         use_agentic_knowledgebase: useAgenticKnowledgeBase,
                         use_web_source: webSourceSupported ? webSourceEnabled : false,
                         use_sharepoint_source: sharePointSourceSupported ? sharePointSourceEnabled : false,
-                        ...(seed !== null ? { seed: seed } : {})
+                        ...(seed !== null ? { seed: seed } : {}),
+                        ...(assistantMode !== "" ? { assistant_mode: assistantMode } : {}),
+                        ...(chatgptModelOverride !== "" ? { chatgpt_model: chatgptModelOverride } : {}),
+                        ...(chatgptDeploymentOverride !== "" ? { chatgpt_deployment: chatgptDeploymentOverride } : {})
                     }
                 },
                 // AI Chat Protocol: Client must pass on any session state received from the server
@@ -479,6 +485,15 @@ const Chat = () => {
                     return;
                 }
                 setSharePointSourceEnabled(!!value);
+                break;
+            case "assistantMode":
+                setAssistantMode(value ?? "");
+                break;
+            case "chatgptModelOverride":
+                setChatgptModelOverride(value ?? "");
+                break;
+            case "chatgptDeploymentOverride":
+                setChatgptDeploymentOverride(value ?? "");
                 break;
         }
     };
@@ -705,6 +720,9 @@ const Chat = () => {
                         useSharePointSource={sharePointSourceEnabled}
                         showSharePointSourceOption={sharePointSourceSupported}
                         hideMinimalRetrievalReasoningOption={hideMinimalRetrievalReasoningOption}
+                        assistantMode={assistantMode}
+                        chatgptModelOverride={chatgptModelOverride}
+                        chatgptDeploymentOverride={chatgptDeploymentOverride}
                         onChange={handleSettingsChange}
                     />
                     {useLogin && <TokenClaimsDisplay />}

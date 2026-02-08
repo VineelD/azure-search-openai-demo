@@ -61,10 +61,6 @@ def setup_list_file_strategy(
 
 def setup_file_processors(
     azure_credential: AsyncTokenCredential,
-    document_intelligence_service: Optional[str],
-    document_intelligence_key: Optional[str] = None,
-    local_pdf_parser: bool = False,
-    local_html_parser: bool = False,
     use_content_understanding: bool = False,
     use_multimodal: bool = False,
     openai_client: Optional[AsyncOpenAI] = None,
@@ -72,18 +68,10 @@ def setup_file_processors(
     openai_deployment: Optional[str] = None,
     content_understanding_endpoint: Optional[str] = None,
 ):
-    """Setup file processors and figure processor for document ingestion.
-
-    Uses build_file_processors from servicesetup to ensure consistent parser/splitter
-    selection logic with the Azure Functions cloud ingestion pipeline.
-    """
+    """Setup file processors and figure processor for document ingestion."""
     file_processors = build_file_processors(
         azure_credential=azure_credential,
-        document_intelligence_service=document_intelligence_service,
-        document_intelligence_key=document_intelligence_key,
-        use_local_pdf_parser=local_pdf_parser,
         use_local_html_parser=local_html_parser,
-        process_figures=use_multimodal,
     )
 
     figure_processor = setup_figure_processor(
@@ -140,12 +128,6 @@ if __name__ == "__main__":  # pragma: no cover
         required=False,
         help="Optional. Use this Azure Blob Storage account key instead of the current user identity to login (use az login to set current user for Azure)",
     )
-    parser.add_argument(
-        "--documentintelligencekey",
-        required=False,
-        help="Optional. Use this Azure Document Intelligence account key instead of the current user identity to login (use az login to set current user for Azure)",
-    )
-
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     args = parser.parse_args()
 
@@ -296,9 +278,6 @@ if __name__ == "__main__":  # pragma: no cover
     else:
         file_processors, figure_processor = setup_file_processors(
             azure_credential=azd_credential,
-            document_intelligence_service=os.getenv("AZURE_DOCUMENTINTELLIGENCE_SERVICE"),
-            document_intelligence_key=clean_key_if_exists(args.documentintelligencekey),
-            local_pdf_parser=os.getenv("USE_LOCAL_PDF_PARSER") == "true",
             local_html_parser=os.getenv("USE_LOCAL_HTML_PARSER") == "true",
             use_content_understanding=use_content_understanding,
             use_multimodal=use_multimodal,

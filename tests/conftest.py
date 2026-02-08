@@ -761,9 +761,6 @@ async def auth_client(
     monkeypatch.setenv("USE_USER_UPLOAD", "true")
     monkeypatch.setenv("AZURE_USERSTORAGE_ACCOUNT", "test-userstorage-account")
     monkeypatch.setenv("AZURE_USERSTORAGE_CONTAINER", "test-userstorage-container")
-    monkeypatch.setenv("USE_LOCAL_PDF_PARSER", "true")
-    monkeypatch.setenv("USE_LOCAL_HTML_PARSER", "true")
-    monkeypatch.setenv("AZURE_DOCUMENTINTELLIGENCE_SERVICE", "test-documentintelligence-service")
     for key, value in request.param.items():
         monkeypatch.setenv(key, value)
 
@@ -799,9 +796,6 @@ async def auth_public_documents_client(
     monkeypatch.setenv("USE_USER_UPLOAD", "true")
     monkeypatch.setenv("AZURE_USERSTORAGE_ACCOUNT", "test-userstorage-account")
     monkeypatch.setenv("AZURE_USERSTORAGE_CONTAINER", "test-userstorage-container")
-    monkeypatch.setenv("USE_LOCAL_PDF_PARSER", "true")
-    monkeypatch.setenv("USE_LOCAL_HTML_PARSER", "true")
-    monkeypatch.setenv("AZURE_DOCUMENTINTELLIGENCE_SERVICE", "test-documentintelligence-service")
     monkeypatch.setenv("USE_CHAT_HISTORY_COSMOS", "true")
     monkeypatch.setenv("AZURE_COSMOSDB_ACCOUNT", "test-cosmosdb-account")
     monkeypatch.setenv("AZURE_CHAT_HISTORY_DATABASE", "test-cosmosdb-database")

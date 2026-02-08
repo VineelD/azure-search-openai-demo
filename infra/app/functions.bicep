@@ -5,7 +5,6 @@ param applicationInsightsName string
 param storageResourceGroupName string
 param searchServiceResourceGroupName string
 param openAiResourceGroupName string
-param documentIntelligenceResourceGroupName string
 param visionServiceName string = ''
 param visionResourceGroupName string = ''
 param contentUnderstandingServiceName string = ''
@@ -343,7 +342,6 @@ module functionsIdentityRBAC 'functions-rbac.bicep' = {
     storageResourceGroupName: storageResourceGroupName
     searchServiceResourceGroupName: searchServiceResourceGroupName
     openAiResourceGroupName: openAiResourceGroupName
-    documentIntelligenceResourceGroupName: documentIntelligenceResourceGroupName
     visionServiceName: visionServiceName
     visionResourceGroupName: visionResourceGroupName
     contentUnderstandingServiceName: contentUnderstandingServiceName

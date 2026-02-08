@@ -49,10 +49,7 @@ def configure_global_settings():
     global settings
 
     # Environment configuration
-    use_local_pdf_parser = os.getenv("USE_LOCAL_PDF_PARSER", "false").lower() == "true"
-    use_local_html_parser = os.getenv("USE_LOCAL_HTML_PARSER", "false").lower() == "true"
     use_multimodal = os.getenv("USE_MULTIMODAL", "false").lower() == "true"
-    document_intelligence_service = os.getenv("AZURE_DOCUMENTINTELLIGENCE_SERVICE")
     storage_is_adls = os.getenv("USE_CLOUD_INGESTION_ACLS", "false").lower() == "true"
     enable_global_document_access = os.getenv("AZURE_ENABLE_GLOBAL_DOCUMENT_ACCESS", "false").lower() == "true"
 
@@ -69,15 +66,7 @@ def configure_global_settings():
         logger.info("Using default Managed Identity without client ID")
         azure_credential = ManagedIdentityCredential()
 
-    # Build file processors dict for parser selection
-    file_processors = build_file_processors(
-        azure_credential=azure_credential,
-        document_intelligence_service=document_intelligence_service,
-        document_intelligence_key=None,
-        use_local_pdf_parser=use_local_pdf_parser,
-        use_local_html_parser=use_local_html_parser,
-        process_figures=use_multimodal,
-    )
+    file_processors = build_file_processors(azure_credential=azure_credential)
 
     blob_manager = setup_blob_manager(
         azure_credential=azure_credential,

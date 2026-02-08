@@ -189,22 +189,6 @@ param openAiSkuName string = 'S0'
 param openAiApiKey string = ''
 param openAiApiOrganization string = ''
 
-param documentIntelligenceServiceName string = '' // Set in main.parameters.json
-param documentIntelligenceResourceGroupName string = '' // Set in main.parameters.json
-
-// Limited regions for new version:
-// https://learn.microsoft.com/azure/ai-services/document-intelligence/concept-layout
-@description('Location for the Document Intelligence resource group')
-@allowed(['eastus', 'westus2', 'westeurope', 'australiaeast'])
-@metadata({
-  azd: {
-    type: 'location'
-  }
-})
-param documentIntelligenceResourceGroupLocation string
-
-param documentIntelligenceSkuName string // Set in main.parameters.json
-
 param visionServiceName string = '' // Set in main.parameters.json
 param visionResourceGroupName string = '' // Set in main.parameters.json
 param visionResourceGroupLocation string = '' // Set in main.parameters.json
@@ -331,8 +315,6 @@ param useMediaDescriberAzureCU bool = true
 
 @description('Enable user document upload feature')
 param useUserUpload bool = false
-param useLocalPdfParser bool = false
-param useLocalHtmlParser bool = false
 
 @description('Use AI project')
 param useAiProject bool = false
@@ -340,6 +322,8 @@ param useAiProject bool = false
 var abbrs = loadJsonContent('abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
+// Same name as userStorage module (no module reference) so listKeys() can be used in zip-processor params
+var userStorageAccountNameResolved = !empty(userStorageAccountName) ? userStorageAccountName : 'user${abbrs.storageStorageAccounts}${resourceToken}'
 
 var tenantIdForAuth = !empty(authTenantId) ? authTenantId : tenantId
 var authenticationIssuerUri = '${environment().authentication.loginEndpoint}${tenantIdForAuth}/v2.0'
@@ -397,10 +381,6 @@ resource resourceGroup 'Microsoft.Resources/resourceGroups@2024-11-01' = {
 
 resource openAiResourceGroup 'Microsoft.Resources/resourceGroups@2024-11-01' existing = if (!empty(openAiResourceGroupName)) {
   name: !empty(openAiResourceGroupName) ? openAiResourceGroupName : resourceGroup.name
-}
-
-resource documentIntelligenceResourceGroup 'Microsoft.Resources/resourceGroups@2024-11-01' existing = if (!empty(documentIntelligenceResourceGroupName)) {
-  name: !empty(documentIntelligenceResourceGroupName) ? documentIntelligenceResourceGroupName : resourceGroup.name
 }
 
 resource visionResourceGroup 'Microsoft.Resources/resourceGroups@2024-11-01' existing = if (!empty(visionResourceGroupName)) {
@@ -554,9 +534,6 @@ var appEnvVariables = {
   AZURE_USERSTORAGE_ACCOUNT: useUserUpload ? userStorage!.outputs.name : ''
   AZURE_USERSTORAGE_CONTAINER: useUserUpload ? userStorageContainerName : ''
   AZURE_IMAGESTORAGE_CONTAINER: useMultimodal ? imageStorageContainerName : ''
-  AZURE_DOCUMENTINTELLIGENCE_SERVICE: documentIntelligence.outputs.name
-  USE_LOCAL_PDF_PARSER: useLocalPdfParser
-  USE_LOCAL_HTML_PARSER: useLocalHtmlParser
   USE_MEDIA_DESCRIBER_AZURE_CU: useMediaDescriberAzureCU
   AZURE_CONTENTUNDERSTANDING_ENDPOINT: useMediaDescriberAzureCU ? contentUnderstanding!.outputs.endpoint : ''
   RUNNING_IN_PRODUCTION: 'true'
@@ -631,6 +608,7 @@ module containerApps 'core/host/container-apps.bicep' = if (deploymentTarget == 
 }
 
 // Container Apps for the web application (Python Quart app with JS frontend)
+// Deployed after backend role assignments so acaIdentity has permissions before the app starts
 module acaBackend 'core/host/container-app-upsert.bicep' = if (deploymentTarget == 'containerapps') {
   name: 'aca-web'
   scope: resourceGroup
@@ -666,6 +644,11 @@ module acaBackend 'core/host/container-app-upsert.bicep' = if (deploymentTarget 
       }
     ] : []
   }
+  dependsOn: [
+    storageRoleBackend
+    searchRoleBackend
+    speechRoleBackend
+  ]
 }
 
 module acaAuth 'core/host/container-apps-auth.bicep' = if (deploymentTarget == 'containerapps' && !empty(clientAppId)) {
@@ -683,6 +666,30 @@ module acaAuth 'core/host/container-apps-auth.bicep' = if (deploymentTarget == '
   }
 }
 
+// Zip Processor Function App (async zip upload processing when useUserUpload is true)
+module zipProcessor 'app/zip-processor.bicep' = if (useUserUpload) {
+  name: 'zip-processor'
+  scope: resourceGroup
+  params: {
+    location: location
+    tags: tags
+    applicationInsightsName: useApplicationInsights ? monitoring!.outputs.applicationInsightsName : ''
+    searchServiceResourceGroupName: searchServiceResourceGroup.name
+    openAiResourceGroupName: openAiResourceGroup.name
+    visionResourceGroupName: useMultimodal ? visionResourceGroup.name : resourceGroup.name
+    contentUnderstandingResourceGroupName: useMediaDescriberAzureCU ? contentUnderstandingResourceGroup.name : resourceGroup.name
+    visionServiceName: useMultimodal ? vision!.outputs.name : ''
+    contentUnderstandingServiceName: useMediaDescriberAzureCU ? contentUnderstanding!.outputs.name : ''
+    useMultimodal: useMultimodal
+    useMediaDescriberAzureCU: useMediaDescriberAzureCU
+    appEnvVariables: appEnvVariables
+    userStorageAccountName: userStorage!.outputs.name
+    userStorageResourceGroupName: storageResourceGroup.name
+    userStorageConnectionString: 'DefaultEndpointsProtocol=https;AccountName=${userStorageAccountNameResolved};AccountKey=${listKeys(resourceId(subscription().subscriptionId, storageResourceGroup.name, 'Microsoft.Storage/storageAccounts', userStorageAccountNameResolved), '2024-01-01').keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
+    zipProcessorName: '${abbrs.webSitesFunctions}zpp-${resourceToken}'
+  }
+}
+
 // Optional Azure Functions for document ingestion and processing
 module functions 'app/functions.bicep' = if (useCloudIngestion) {
   name: 'functions'
@@ -694,7 +701,6 @@ module functions 'app/functions.bicep' = if (useCloudIngestion) {
     storageResourceGroupName: storageResourceGroup.name
     searchServiceResourceGroupName: searchServiceResourceGroup.name
     openAiResourceGroupName: openAiResourceGroup.name
-    documentIntelligenceResourceGroupName: documentIntelligenceResourceGroup.name
     visionServiceName: useMultimodal ? vision!.outputs.name : ''
     visionResourceGroupName: useMultimodal ? visionResourceGroup.name : resourceGroup.name
     contentUnderstandingServiceName: useMediaDescriberAzureCU ? contentUnderstanding!.outputs.name : ''
@@ -792,30 +798,6 @@ module openAi 'br/public:avm/res/cognitive-services/account:0.7.2' = if (isAzure
   }
 }
 
-// Formerly known as Form Recognizer
-// Does not support bypass
-module documentIntelligence 'br/public:avm/res/cognitive-services/account:0.7.2' = {
-  name: 'documentintelligence'
-  scope: documentIntelligenceResourceGroup
-  params: {
-    name: !empty(documentIntelligenceServiceName)
-      ? documentIntelligenceServiceName
-      : '${abbrs.cognitiveServicesDocumentIntelligence}${resourceToken}'
-    kind: 'FormRecognizer'
-    customSubDomainName: !empty(documentIntelligenceServiceName)
-      ? documentIntelligenceServiceName
-      : '${abbrs.cognitiveServicesDocumentIntelligence}${resourceToken}'
-    publicNetworkAccess: publicNetworkAccess
-    networkAcls: {
-      defaultAction: 'Allow'
-    }
-    location: documentIntelligenceResourceGroupLocation
-    disableLocalAuth: true
-    tags: tags
-    sku: documentIntelligenceSkuName
-  }
-}
-
 module vision 'br/public:avm/res/cognitive-services/account:0.7.2' = if (useMultimodal) {
   name: 'vision'
   scope: visionResourceGroup
@@ -851,7 +833,7 @@ module contentUnderstanding 'br/public:avm/res/cognitive-services/account:0.7.2'
     customSubDomainName: !empty(contentUnderstandingServiceName)
       ? contentUnderstandingServiceName
       : '${abbrs.cognitiveServicesContentUnderstanding}${resourceToken}'
-    // Hard-coding to westus for now, due to limited availability and no overlap with Document Intelligence
+    // Hard-coding to westus for now, due to limited availability
     location: 'westus'
     tags: tags
     sku: 'S0'
@@ -950,7 +932,8 @@ module userStorage 'core/storage/storage-account.bicep' = if (useUserUpload) {
     publicNetworkAccess: publicNetworkAccess
     bypass: bypass
     allowBlobPublicAccess: false
-    allowSharedKeyAccess: false
+    // Allow shared key so zip-processor blob trigger can use connection string (identity-based trigger can be unreliable)
+    allowSharedKeyAccess: true
     isHnsEnabled: true
     sku: {
       name: storageSkuName
@@ -1091,7 +1074,7 @@ module openAiRoleUser 'core/security/role.bicep' = if (isAzureOpenAiHost && depl
   }
 }
 
-// For both Document Intelligence and AI vision
+// For AI vision
 module cognitiveServicesRoleUser 'core/security/role.bicep' = {
   scope: resourceGroup
   name: 'cognitiveservices-role-user'
@@ -1204,7 +1187,7 @@ module openAiRoleBackend 'core/security/role.bicep' = if (isAzureOpenAiHost && d
   params: {
     principalId: (deploymentTarget == 'appservice')
       ? backend!.outputs.identityPrincipalId
-      : acaBackend!.outputs.identityPrincipalId
+      : acaIdentity!.outputs.principalId
     roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
     principalType: 'ServicePrincipal'
   }
@@ -1230,13 +1213,16 @@ module visionRoleSearchService 'core/security/role.bicep' = if (useMultimodal &&
   }
 }
 
+// Backend (App Service or Container App) permissions - one-to-one so no runtime surprises:
+// Storage (below), Search, Speech, OpenAI, Vision, Cosmos (if auth+chat history),
+// and when useUserUpload: Storage Blob Data Owner on user storage, Search Index Data Contributor.
 module storageRoleBackend 'core/security/role.bicep' = {
   scope: storageResourceGroup
   name: 'storage-role-backend'
   params: {
     principalId: (deploymentTarget == 'appservice')
       ? backend!.outputs.identityPrincipalId
-      : acaBackend!.outputs.identityPrincipalId
+      : acaIdentity!.outputs.principalId
     roleDefinitionId: '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1' // Storage Blob Data Reader
     principalType: 'ServicePrincipal'
   }
@@ -1248,7 +1234,7 @@ module storageOwnerRoleBackend 'core/security/role.bicep' = if (useUserUpload) {
   params: {
     principalId: (deploymentTarget == 'appservice')
       ? backend!.outputs.identityPrincipalId
-      : acaBackend!.outputs.identityPrincipalId
+      : acaIdentity!.outputs.principalId
     roleDefinitionId: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' // Storage Blob Data Owner
     principalType: 'ServicePrincipal'
   }
@@ -1321,7 +1307,7 @@ module storageRoleContributorBackend 'core/security/role.bicep' = if (deployment
   scope: storageResourceGroup
   name: 'storage-role-contributor-aca-backend'
   params: {
-    principalId: acaBackend!.outputs.identityPrincipalId
+    principalId: acaIdentity!.outputs.principalId
     roleDefinitionId: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Storage Blob Data Contributor
     principalType: 'ServicePrincipal'
   }
@@ -1335,7 +1321,7 @@ module searchRoleBackend 'core/security/role.bicep' = {
   params: {
     principalId: (deploymentTarget == 'appservice')
       ? backend!.outputs.identityPrincipalId
-      : acaBackend!.outputs.identityPrincipalId
+      : acaIdentity!.outputs.principalId
     roleDefinitionId: '1407120a-92aa-4202-b7e9-c0e197c71c8f'
     principalType: 'ServicePrincipal'
   }
@@ -1347,7 +1333,7 @@ module speechRoleBackend 'core/security/role.bicep' = {
   params: {
     principalId: (deploymentTarget == 'appservice')
       ? backend!.outputs.identityPrincipalId
-      : acaBackend!.outputs.identityPrincipalId
+      : acaIdentity!.outputs.principalId
     roleDefinitionId: 'f2dc8367-1007-4938-bd23-fe263f013447' // Cognitive Services Speech User
     principalType: 'ServicePrincipal'
   }
@@ -1362,7 +1348,7 @@ module cosmosDbRoleBackend 'core/security/documentdb-sql-role.bicep' = if (useAu
     databaseAccountName: (useAuthentication && useChatHistoryCosmos) ? cosmosDb!.outputs.name : ''
     principalId: (deploymentTarget == 'appservice')
       ? backend!.outputs.identityPrincipalId
-      : acaBackend!.outputs.identityPrincipalId
+      : acaIdentity!.outputs.principalId
     // Cosmos DB Built-in Data Contributor role
     roleDefinitionId: (useAuthentication && useChatHistoryCosmos)
       ? '/${subscription().id}/resourceGroups/${cosmosDb!.outputs.resourceGroupName}/providers/Microsoft.DocumentDB/databaseAccounts/${cosmosDb!.outputs.name}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
@@ -1396,15 +1382,12 @@ var openAiPrivateEndpointConnection = (usePrivateEndpoint && isAzureOpenAiHost &
     ]
   : []
 
-var cognitiveServicesPrivateEndpointConnection = (usePrivateEndpoint && (!useLocalPdfParser || useMultimodal || useMediaDescriberAzureCU))
+var cognitiveServicesPrivateEndpointConnection = (usePrivateEndpoint && (useMultimodal || useMediaDescriberAzureCU))
   ? [
       {
         groupId: 'account'
         dnsZoneName: 'privatelink.cognitiveservices.azure.com'
-        // Only include generic Cognitive Services-based resources (Form Recognizer / Vision / Content Understanding)
-        // Azure OpenAI uses its own privatelink.openai.azure.com zone and already has a separate private endpoint above.
         resourceIds: concat(
-          !useLocalPdfParser ? [documentIntelligence.outputs.resourceId] : [],
           useMultimodal ? [vision!.outputs.resourceId] : [],
           useMediaDescriberAzureCU ? [contentUnderstanding!.outputs.resourceId] : []
         )
@@ -1476,7 +1459,7 @@ module searchReaderRoleBackend 'core/security/role.bicep' = if (useAuthenticatio
   params: {
     principalId: (deploymentTarget == 'appservice')
       ? backend!.outputs.identityPrincipalId
-      : acaBackend!.outputs.identityPrincipalId
+      : acaIdentity!.outputs.principalId
     roleDefinitionId: 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
     principalType: 'ServicePrincipal'
   }
@@ -1489,7 +1472,7 @@ module searchContribRoleBackend 'core/security/role.bicep' = if (useUserUpload) 
   params: {
     principalId: (deploymentTarget == 'appservice')
       ? backend!.outputs.identityPrincipalId
-      : acaBackend!.outputs.identityPrincipalId
+      : acaIdentity!.outputs.principalId
     roleDefinitionId: '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
     principalType: 'ServicePrincipal'
   }
@@ -1502,20 +1485,7 @@ module visionRoleBackend 'core/security/role.bicep' = if (useMultimodal) {
   params: {
     principalId: (deploymentTarget == 'appservice')
       ? backend!.outputs.identityPrincipalId
-      : acaBackend!.outputs.identityPrincipalId
-    roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908'
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// For document intelligence access by the backend
-module documentIntelligenceRoleBackend 'core/security/role.bicep' = if (useUserUpload) {
-  scope: documentIntelligenceResourceGroup
-  name: 'documentintelligence-role-backend'
-  params: {
-    principalId: (deploymentTarget == 'appservice')
-      ? backend!.outputs.identityPrincipalId
-      : acaBackend!.outputs.identityPrincipalId
+      : acaIdentity!.outputs.principalId
     roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908'
     principalType: 'ServicePrincipal'
   }
@@ -1555,9 +1525,6 @@ output AZURE_SPEECH_SERVICE_LOCATION string = useSpeechOutputAzure ? speech!.out
 
 output AZURE_VISION_ENDPOINT string = useMultimodal ? vision!.outputs.endpoint : ''
 output AZURE_CONTENTUNDERSTANDING_ENDPOINT string = useMediaDescriberAzureCU ? contentUnderstanding!.outputs.endpoint : ''
-
-output AZURE_DOCUMENTINTELLIGENCE_SERVICE string = documentIntelligence.outputs.name
-output AZURE_DOCUMENTINTELLIGENCE_RESOURCE_GROUP string = documentIntelligenceResourceGroup.name
 
 output AZURE_SEARCH_INDEX string = searchIndexName
 output AZURE_SEARCH_KNOWLEDGEBASE_NAME string = knowledgeBaseName

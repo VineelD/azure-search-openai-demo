@@ -16,10 +16,8 @@ from .csvparser import CsvParser
 from .embeddings import ImageEmbeddings, OpenAIEmbeddings
 from .figureprocessor import FigureProcessor, MediaDescriptionStrategy
 from .fileprocessor import FileProcessor
-from .htmlparser import LocalHTMLParser
 from .jsonparser import JsonParser
 from .parser import Parser
-from .pdfparser import DocumentAnalysisParser, LocalPdfParser
 from .strategy import SearchInfo
 from .textparser import TextParser
 from .textsplitter import SentenceTextSplitter, SimpleTextSplitter
@@ -246,71 +244,23 @@ def setup_figure_processor(
 def build_file_processors(
     *,
     azure_credential: AsyncTokenCredential,
-    document_intelligence_service: str | None,
-    document_intelligence_key: str | None = None,
-    use_local_pdf_parser: bool = False,
-    use_local_html_parser: bool = False,
-    process_figures: bool = False,
 ) -> dict[str, FileProcessor]:
     sentence_text_splitter = SentenceTextSplitter()
 
-    doc_int_parser: Optional[DocumentAnalysisParser] = None
-    # check if Azure Document Intelligence credentials are provided
-    if document_intelligence_service:
-        credential: AsyncTokenCredential | AzureKeyCredential
-        if document_intelligence_key:
-            credential = AzureKeyCredential(document_intelligence_key)
-        else:
-            credential = azure_credential
-        doc_int_parser = DocumentAnalysisParser(
-            endpoint=f"https://{document_intelligence_service}.cognitiveservices.azure.com/",
-            credential=credential,
-            process_figures=process_figures,
-        )
-
-    pdf_parser: Optional[Parser] = None
-    if use_local_pdf_parser or document_intelligence_service is None:
-        pdf_parser = LocalPdfParser()
-    elif doc_int_parser is not None:
-        pdf_parser = doc_int_parser
-    else:
-        logger.warning("No PDF parser available")
-
-    html_parser: Optional[Parser] = None
-    if use_local_html_parser or document_intelligence_service is None:
-        html_parser = LocalHTMLParser()
-    elif doc_int_parser is not None:
-        html_parser = doc_int_parser
-    else:
-        logger.warning("No HTML parser available")
-
-    # These file formats can always be parsed:
     file_processors = {
         ".json": FileProcessor(JsonParser(), SimpleTextSplitter()),
         ".md": FileProcessor(TextParser(), sentence_text_splitter),
         ".txt": FileProcessor(TextParser(), sentence_text_splitter),
         ".csv": FileProcessor(CsvParser(), sentence_text_splitter),
+        ".ts": FileProcessor(TextParser(), sentence_text_splitter),
+        ".tsx": FileProcessor(TextParser(), sentence_text_splitter),
+        ".js": FileProcessor(TextParser(), sentence_text_splitter),
+        ".jsx": FileProcessor(TextParser(), sentence_text_splitter),
+        ".mjs": FileProcessor(TextParser(), sentence_text_splitter),
+        ".cjs": FileProcessor(TextParser(), sentence_text_splitter),
+        ".css": FileProcessor(TextParser(), sentence_text_splitter),
+        ".html": FileProcessor(TextParser(), sentence_text_splitter),
     }
-    # These require either a Python package or Document Intelligence
-    if pdf_parser is not None:
-        file_processors.update({".pdf": FileProcessor(pdf_parser, sentence_text_splitter)})
-    if html_parser is not None:
-        file_processors.update({".html": FileProcessor(html_parser, sentence_text_splitter)})
-    # These file formats require Document Intelligence
-    if doc_int_parser is not None:
-        file_processors.update(
-            {
-                ".docx": FileProcessor(doc_int_parser, sentence_text_splitter),
-                ".pptx": FileProcessor(doc_int_parser, sentence_text_splitter),
-                ".xlsx": FileProcessor(doc_int_parser, sentence_text_splitter),
-                ".png": FileProcessor(doc_int_parser, sentence_text_splitter),
-                ".jpg": FileProcessor(doc_int_parser, sentence_text_splitter),
-                ".jpeg": FileProcessor(doc_int_parser, sentence_text_splitter),
-                ".tiff": FileProcessor(doc_int_parser, sentence_text_splitter),
-                ".bmp": FileProcessor(doc_int_parser, sentence_text_splitter),
-                ".heic": FileProcessor(doc_int_parser, sentence_text_splitter),
-            }
-        )
     return file_processors
 
 

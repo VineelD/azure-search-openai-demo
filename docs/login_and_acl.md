@@ -27,6 +27,7 @@ The [azure-search-openai-demo](/) project can set up a full RAG chat app on Azur
 
 - [Requirements](#requirements)
 - [Setting up Microsoft Entra applications](#setting-up-microsoft-entra-applications)
+  - [Quick start](#quick-start)
   - [Automatic Setup](#automatic-setup)
   - [Manual Setup](#manual-setup)
     - [Server App](#server-app)
@@ -56,7 +57,17 @@ This guide demonstrates how to add an optional login and document level access c
 
 ## Setting up Microsoft Entra applications
 
-Two Microsoft Entra applications must be registered in order to make the optional login and document level access control system work correctly. One app is for the client UI. The client UI is implemented as a [single page application](https://learn.microsoft.com/entra/identity-platform/scenario-spa-app-registration). The other app is for the API server. The API server uses a [confidential client](https://learn.microsoft.com/entra/identity-platform/msal-client-applications) to call the [Microsoft Graph API](https://learn.microsoft.com/graph/use-the-api).
+Two Microsoft Entra applications must be registered in order to make the optional login and document level access control system work correctly. For a short, step-by-step guide focused only on creating Entra ID for authentication, see **[Entra ID authentication quickstart](entra_id_authentication_quickstart.md)**.
+
+### Quick start
+
+1. Enable auth: `azd env set AZURE_USE_AUTHENTICATION true`
+2. (Optional) Set auth tenant: `azd env set AZURE_AUTH_TENANT_ID <YOUR-TENANT-ID>`
+3. Run `azd up` — the two Entra apps are created automatically during preprovision.
+
+Then continue below for optional settings (enforce access control, unauthenticated access, etc.).
+
+--- One app is for the client UI. The client UI is implemented as a [single page application](https://learn.microsoft.com/entra/identity-platform/scenario-spa-app-registration). The other app is for the API server. The API server uses a [confidential client](https://learn.microsoft.com/entra/identity-platform/msal-client-applications) to call the [Microsoft Graph API](https://learn.microsoft.com/graph/use-the-api).
 
 ### Automatic Setup
 

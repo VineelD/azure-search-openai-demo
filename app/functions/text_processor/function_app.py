@@ -60,8 +60,6 @@ def configure_global_settings():
     azure_openai_custom_url = os.getenv("AZURE_OPENAI_CUSTOM_URL")
     azure_openai_emb_deployment = os.getenv("AZURE_OPENAI_EMB_DEPLOYMENT")
     azure_openai_emb_model_name = os.getenv("AZURE_OPENAI_EMB_MODEL_NAME", "text-embedding-3-large")
-    document_intelligence_service = os.getenv("AZURE_DOCUMENTINTELLIGENCE_SERVICE")
-
     # Single shared managed identity credential
     if AZURE_CLIENT_ID := os.getenv("AZURE_CLIENT_ID"):
         logger.info("Using Managed Identity with client ID: %s", AZURE_CLIENT_ID)
@@ -70,15 +68,7 @@ def configure_global_settings():
         logger.info("Using default Managed Identity without client ID")
         azure_credential = ManagedIdentityCredential()
 
-    # Build file processors to get correct splitter for each file type
-    file_processors = build_file_processors(
-        azure_credential=azure_credential,
-        document_intelligence_service=document_intelligence_service,
-        document_intelligence_key=None,
-        use_local_pdf_parser=False,
-        use_local_html_parser=False,
-        process_figures=use_multimodal,
-    )
+    file_processors = build_file_processors(azure_credential=azure_credential)
 
     # Embedding service (optional)
     embedding_service = None
